@@ -1,0 +1,16 @@
+Package: privreg
+Type: Package
+Title: Privacy-preserving Regression
+Version: 0.1.0
+Author: Erik-Jan van Kesteren
+Maintainer: Erik-Jan van Kesteren <e.vankesteren1@uu.nl>
+Description: Perform regression on vertically partitioned data using block
+    coordinate descent.
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Imports: 
+    httpuv,
+    websocket,
+    R6
+RoxygenNote: 6.1.1

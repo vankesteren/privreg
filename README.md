@@ -18,7 +18,7 @@ y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
 # create objects with vertically partitioned datasets
 # you would create these at separate institutions.
-alice <- privreg$new(X[, 1:5], y,  name = "alice", verbose = TRUE)
+alice <- privreg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
 bob   <- privreg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
 
 # create connection

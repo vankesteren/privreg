@@ -24,9 +24,11 @@ privreg <- R6::R6Class(
         host = "0.0.0.0",
         port = port,
         app  = list(
-          onHeaders = function(req) { cat(capture.output(str(as.list(req))), sep = "\n") },
+          onHeaders = function(req) {
+            # do nothing
+          },
           onWSOpen = function(ws) {
-            cat("Connection opened.\n")
+            cat(self$name, "| Connection opened.\n")
             private$ws <- ws
             private$setup_ws_server()
           }
@@ -35,13 +37,16 @@ privreg <- R6::R6Class(
     },
     connect = function(url, port = 8080) {
       if (self$verbose) cat(paste(self$name, "| opening websocket connection\n"))
+
+      full_url <- paste0("ws://", url, ":", port)
+
       private$ws <- websocket::WebSocket$new(
-        url = url,
+        url = full_url,
         headers = list(Cookie = "private_regression"),
         accessLogChannels = "none",
         autoConnect = FALSE
       )
-      private$setup_ws_connect()
+      private$setup_ws_client()
       private$ws$connect()
     },
     start = function() {
@@ -70,12 +75,21 @@ privreg <- R6::R6Class(
     srv = NULL,
 
     setup_ws_server = function() {
+      # httpuv websocket has different api than websocket :(
+      # see https://github.com/rstudio/httpuv/blob/12744e32b0ef8480d8cffb12e9888cbae7f12778/R/httpuv.R#L291
       if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
+
       private$ws$onMessage(function(binary, message) {
-        private$y_res_incoming <- c(eval(parse(text = rawToChar(message))))
+        if (!binary) {
+          # something went wrong
+          private$disconnect()
+          stop("Message received was not binary.")
+        }
+
+        private$y_res_incoming <-  private$encrypted_raw_to_vec(message)
         private$compute_beta()
         self$iter = self$iter + 1L
-        if (self$verbose) cat(self$iter, "\n")
+        if (self$verbose) cat(self$name, "| iteration:", self$iter, "\n")
         if (self$iter < self$max_iter) {
           private$compute_y_res()
           private$send_y_res()
@@ -83,22 +97,24 @@ privreg <- R6::R6Class(
           self$disconnect()
         }
       })
+
       private$ws$onClose(function() {
-        cat("Connection closed.\n")
+        cat(self$name, "| Connection closed.\n")
       })
     },
 
-    setup_ws_connect = function() {
+    setup_ws_client = function() {
+      # websocket has different api than httuv websocket :(
       if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
       private$ws$onOpen(function(event) {
-        cat("connection opened\n")
+        cat(self$name, "| Connection opened.\n")
       })
 
       private$ws$onMessage(function(event) {
-        private$y_res_incoming <- c(eval(parse(text = rawToChar(event$data))))
+        private$y_res_incoming <- private$encrypted_raw_to_vec(event$data)
         private$compute_beta()
         self$iter = self$iter + 1L
-        if (self$verbose) cat(self$iter)
+        if (self$verbose) cat(self$name, "| iteration:", self$iter, "\n")
         if (self$iter < self$max_iter) {
           private$compute_y_res()
           private$send_y_res()
@@ -108,8 +124,7 @@ privreg <- R6::R6Class(
       })
 
       private$ws$onClose(function(event) {
-        cat("Client disconnected with code ", event$code,
-            " and reason ", event$reason, "\n", sep = "")
+        cat(self$name, "| Connection closed.\n")
       })
     },
 
@@ -124,11 +139,27 @@ privreg <- R6::R6Class(
     },
 
     send_y_res = function() {
-
       if (self$verbose) cat(paste(self$name, "| sending y_res.\n"))
-      msg <- charToRaw(paste(capture.output(dput(private$y_res_outgoing)),
-                             collapse = " "))
+      msg <- private$vec_to_encrypted_raw(private$y_res_outgoing)
       private$ws$send(msg)
+    },
+
+    vec_to_encrypted_raw = function(vec, key = "test") {
+      # converts numeric vector to secure binary message
+      serialized <- serialize(vec, NULL)
+      return(private$encrypt(serialized, key))
+    },
+    encrypted_raw_to_vec = function(raw, key = "test") {
+      decrypted <- private$decrypt(raw, key)
+      unserialize(decrypted)
+    },
+    encrypt = function(text, key) {
+      # TODO: replace this with actual encryption at some point.
+      text
+    },
+    decrypt = function(text, key) {
+      # TODO: replace this with actual decryption at some point
+      text
     }
   )
 )

@@ -14,6 +14,7 @@ Imports:
     websocket,
     R6
 Remotes:
-    "rstudio/websocket",
-    "rstudio/httpuv"
+    "rstudio/websocket"
 RoxygenNote: 6.1.1
+Suggests: 
+    testthat

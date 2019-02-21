@@ -12,7 +12,7 @@ X <- MASS::mvrnorm(100, rep(0, 10), S)
 b <- runif(10, -1, 1)
 y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
-alice <- privreg$new(X[, 1:5],  y  name = "alice", verbose = TRUE)
+alice <- privreg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
 bob   <- privreg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
 alice$listen()
 bob$connect("127.0.0.1")

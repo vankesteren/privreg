@@ -33,6 +33,6 @@ alice$start()
 # ...
 
 # compare results to lm()
-cbind(true =  coef(lm(y ~ X + 0)), 
+cbind(true = coef(lm(y ~ X + 0)), 
       priv = c(alice$beta, bob$beta))
 ```

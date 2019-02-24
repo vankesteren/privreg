@@ -21,7 +21,7 @@ PrivReg <- R6::R6Class(
       self$verbose   <- verbose
       self$crypt_key <- crypt_key
     },
-    listen     = function(port = 443) {
+    listen     = function(port = 8080) {
       if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
       private$srv <- httpuv::startServer(
         host = "0.0.0.0",
@@ -38,7 +38,7 @@ PrivReg <- R6::R6Class(
         )
       )
     },
-    connect    = function(url, port = 443) {
+    connect    = function(url, port = 8080) {
       if (self$verbose) cat(paste(self$name, "| opening websocket connection\n"))
 
       full_url <- paste0("ws://", url, ":", port)

@@ -9,11 +9,12 @@ Description: Perform regression on vertically partitioned data using block
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
-Imports: 
+Imports:
     httpuv,
     websocket,
-    R6
+    R6,
+    openssl
 Remotes: RStudio/websocket
 RoxygenNote: 6.1.1
-Suggests: 
+Suggests:
     testthat

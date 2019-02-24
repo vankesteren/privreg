@@ -12,16 +12,13 @@ X <- MASS::mvrnorm(100, rep(0, 10), S)
 b <- runif(10, -1, 1)
 y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
-alice <- privreg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
-bob   <- privreg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
+alice <- PrivReg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
+bob   <- PrivReg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
 alice$listen()
 bob$connect("127.0.0.1")
 
-# expect(bob$.__enclos_env__$private$ws$readyState() == 1, "bob not connected")
-# expect(alice$.__enclos_env__$private$ws$request$HEADERS["connection"] ==
-#          "Upgrade", "alice not connected")
-
-alice$max_iter <- 300
+# expect(bob$connected(), "bob not connected")
+# expect(alice$connected(), "alice not connected")
 
 alice$verbose <- FALSE
 bob$verbose <- FALSE

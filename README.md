@@ -18,15 +18,16 @@ y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
 # create objects with vertically partitioned datasets
 # you would create these at separate institutions.
-alice <- privreg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
-bob   <- privreg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
+alice <- PrivReg$new(X[, 1:5],  y, name = "alice", verbose = TRUE,
+                     crypt_key = "pre-shared-key123")
+bob   <- PrivReg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE,
+                     crypt_key = "pre-shared-key123")
 
 # create connection
 alice$listen()
 bob$connect("127.0.0.1") # if alice is on different computer, change ip
 
 # estimate
-alice$max_iter <- 300
 alice$start()
 
 # ...

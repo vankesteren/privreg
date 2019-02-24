@@ -1,5 +1,6 @@
 # `privreg`: Private regression using block coordinate descent
 
+[![Build Status](https://travis-ci.org/vankesteren/privreg.svg?branch=master)](https://travis-ci.org/vankesteren/privreg)
 
 ## install
 ```r

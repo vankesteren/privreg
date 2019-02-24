@@ -1,4 +1,5 @@
-context("test-privreg")
+context("Test PrivReg")
+skip("Automated testing does not work yet.")
 
 # automated testing is not really working :(
 
@@ -17,8 +18,10 @@ bob   <- PrivReg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
 alice$listen()
 bob$connect("127.0.0.1")
 
-# expect(bob$connected(), "bob not connected")
-# expect(alice$connected(), "alice not connected")
+Sys.sleep(3)
+
+expect(bob$connected(), "bob not connected")
+expect(alice$connected(), "alice not connected")
 
 alice$verbose <- FALSE
 bob$verbose <- FALSE

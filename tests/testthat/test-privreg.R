@@ -13,8 +13,11 @@ X <- MASS::mvrnorm(100, rep(0, 10), S)
 b <- runif(10, -1, 1)
 y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
-alice <- PrivReg$new(X[, 1:5],  y, name = "alice", verbose = TRUE)
-bob   <- PrivReg$new(X[, 6:10], y, name = "bob  ", verbose = TRUE)
+alice_data <- data.frame(y, X[, 1:5])
+bob_data   <- data.frame(y, X[, 6:10])
+
+alice <- PrivReg$new(y ~ . + 0, data = alice_data, name = "alice", verbose = TRUE)
+bob   <- PrivReg$new(y ~ . + 0, data = bob_data,   name = "bob  ", verbose = TRUE)
 alice$listen()
 bob$connect("127.0.0.1")
 

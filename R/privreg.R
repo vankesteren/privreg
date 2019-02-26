@@ -6,17 +6,17 @@
 PrivReg <- R6::R6Class(
   classname = "PrivReg",
   public = list(
-    beta       = NULL,
+    fit        = NULL,
+    family     = "gaussian",
     iter       = 0L,
     verbose    = NULL,
     max_iter   = 1e3L,
     name       = NULL,
     crypt_key  = NULL,
-    initialize = function(X, y, name = "alice", verbose = FALSE,
+    initialize = function(formula, data, name = "alice", verbose = FALSE,
                           crypt_key = "testkey") {
-      private$X      <- X
-      private$y      <- y
-      self$beta      <- numeric(ncol(X))
+      private$X      <- as.data.frame(model.matrix(formula, data))
+      private$y      <- unname(model.response(model.frame(formula, data)))
       self$name      <- name
       self$verbose   <- verbose
       self$crypt_key <- crypt_key
@@ -56,8 +56,8 @@ PrivReg <- R6::R6Class(
       if (!self$connected()) stop("Connect to another institution first.")
       if (self$verbose) cat(paste(self$name, "| performing initial run\n"))
       private$y_res_incoming <- private$y
-      private$compute_beta()
-      self$iter = self$iter + 1L
+      private$fit_model()
+      self$iter <- self$iter + 1L
       private$compute_y_res()
       private$send_y_res()
     },
@@ -124,7 +124,7 @@ PrivReg <- R6::R6Class(
     },
     run_iteration   = function(message) {
       private$y_res_incoming <- private$data_decrypt(message, self$crypt_key)
-      private$compute_beta()
+      private$fit_model()
       self$iter = self$iter + 1L
       if (self$verbose) cat(self$name, "| iteration:", self$iter, "\n")
       if (self$iter < self$max_iter) {
@@ -134,13 +134,21 @@ PrivReg <- R6::R6Class(
         self$disconnect()
       }
     },
-    compute_beta    = function() {
+    fit_model       = function() {
       if (self$verbose) cat(paste(self$name, "| computing beta.\n"))
-      self$beta <- coef(lm(private$y_res_incoming ~ private$X + 0))
+      self$fit  <- glm(private$y_res_incoming ~ . + 0,
+                       family = self$family, data = private$X)
     },
     compute_y_res   = function() {
       if (self$verbose) cat(paste(self$name, "| Computing y_res.\n"))
-      private$y_res_outgoing <- private$y - private$X %*% self$beta
+      if (self$family == "binomial") {
+        s <- private$y - (1 - private$y)
+        p <- predict(fit, type = "response")
+        d <- s * sqrt(-2 * (private$y * log(p) + (1 - private$y) * log(1 - p)))
+        private$y_res_outgoing <- 1 / (1 + exp(-d))
+      } else {
+        private$y_res_outgoing <- private$y - predict(self$fit, type = "response")
+      }
     },
     send_y_res      = function() {
       if (self$verbose) cat(paste(self$name, "| sending y_res.\n"))

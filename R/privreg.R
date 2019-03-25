@@ -6,20 +6,24 @@
 PrivReg <- R6::R6Class(
   classname = "PrivReg",
   public = list(
-    fit        = NULL,
+    beta       = NULL,
     family     = "gaussian",
     iter       = 0L,
     verbose    = NULL,
     max_iter   = 1e3L,
     name       = NULL,
     crypt_key  = NULL,
-    initialize = function(formula, data, name = "alice", verbose = FALSE,
-                          crypt_key = "testkey") {
-      private$X      <- as.data.frame(model.matrix(formula, data))
+    initialize = function(formula, data, family = "gaussian", name = "alice",
+                          verbose = FALSE, crypt_key = "testkey") {
+      private$X      <- model.matrix(formula, data)
       private$y      <- unname(model.response(model.frame(formula, data)))
+      private$betas  <- matrix(0, nrow = self$max_iter, ncol = ncol(private$X))
+      private$pred_incoming <- rep(0, length(private$y))
+      private$pred_outgoing <- rep(0, length(private$y))
       self$name      <- name
       self$verbose   <- verbose
       self$crypt_key <- crypt_key
+      self$family    <- family
     },
     listen     = function(port = 8080) {
       if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
@@ -54,15 +58,14 @@ PrivReg <- R6::R6Class(
     },
     start      = function() {
       if (!self$connected()) stop("Connect to another institution first.")
-      if (self$verbose) cat(paste(self$name, "| performing initial run\n"))
-      private$y_res_incoming <- private$y
+      if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
       private$fit_model()
       self$iter <- self$iter + 1L
-      private$compute_y_res()
-      private$send_y_res()
+      private$compute_pred()
+      private$send_pred()
     },
     disconnect = function() {
-      if (self$verbose) cat(paste(self$name, "| disconnecting.\n"))
+      if (self$verbose) cat(paste(self$name, "| Disconnecting.\n"))
       if (inherits(private$ws, "WebSocket")) private$ws$close()
       if (!is.null(private$srv)) {
         httpuv::stopServer(private$srv)
@@ -79,13 +82,33 @@ PrivReg <- R6::R6Class(
       } else {
         return(FALSE)
       }
+    },
+    plot_paths = function() {
+      if (!requireNamespace("firatheme", quietly = TRUE))
+        stop("Install firatheme: devtools::install_github(\"vankesteren/firatheme\")")
+      if (!requireNamespace("ggplot2", quietly = TRUE))
+        stop("Install ggplot2")
+      if (!requireNamespace("dplyr", quietly = TRUE))
+        stop("Install dplyr")
+      if (!requireNamespace("tidyr", quietly = TRUE))
+        stop("Install tidyr")
+
+      `%>%` <- dplyr::`%>%`
+      tibble::as_tibble(private$betas) %>%
+        dplyr::mutate(iter = 1:n()) %>%
+        tidyr::gather("param", "value", -iter) %>%
+        ggplot2::ggplot(aes(x = iter, y = value, colour = param)) +
+        ggplot2::geom_line(size = 1) +
+        firatheme::theme_fira() +
+        firatheme::scale_colour_fira()
     }
   ),
   private = list(
     X               = NULL,
     y               = NULL,
-    y_res_incoming  = NULL,
-    y_res_outgoing  = NULL,
+    betas           = NULL,
+    pred_incoming   = NULL,
+    pred_outgoing   = NULL,
     ws              = NULL,
     srv             = NULL,
     setup_ws_server = function() {
@@ -123,36 +146,33 @@ PrivReg <- R6::R6Class(
       })
     },
     run_iteration   = function(message) {
-      private$y_res_incoming <- private$data_decrypt(message, self$crypt_key)
+      private$pred_incoming <- private$data_decrypt(message, self$crypt_key)
       private$fit_model()
-      self$iter = self$iter + 1L
+      self$iter <- self$iter + 1L
       if (self$verbose) cat(self$name, "| iteration:", self$iter, "\n")
       if (self$iter < self$max_iter) {
-        private$compute_y_res()
-        private$send_y_res()
+        private$compute_pred()
+        private$send_pred()
       } else {
         self$disconnect()
       }
     },
     fit_model       = function() {
-      if (self$verbose) cat(paste(self$name, "| computing beta.\n"))
-      self$fit  <- glm(private$y_res_incoming ~ . + 0,
-                       family = self$family, data = private$X)
+      if (self$verbose) cat(paste(self$name, "| Computing beta.\n"))
+      self$beta  <- switch(self$family,
+        gaussian = fit_gaussian(private$y, private$X, private$pred_incoming),
+        binomial = fit_binomial(private$y, private$X,
+                                private$pred_incoming, private$pred_outgoing)
+      )
+      private$betas[self$iter + 1, ] <- self$beta
     },
-    compute_y_res   = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing y_res.\n"))
-      if (self$family == "binomial") {
-        s <- private$y - (1 - private$y)
-        p <- predict(fit, type = "response")
-        d <- s * sqrt(-2 * (private$y * log(p) + (1 - private$y) * log(1 - p)))
-        private$y_res_outgoing <- 1 / (1 + exp(-d))
-      } else {
-        private$y_res_outgoing <- private$y - predict(self$fit, type = "response")
-      }
+    compute_pred    = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
+      private$pred_outgoing <- private$X %*% self$beta
     },
-    send_y_res      = function() {
-      if (self$verbose) cat(paste(self$name, "| sending y_res.\n"))
-      msg <- private$data_encrypt(private$y_res_outgoing, self$crypt_key)
+    send_pred       = function() {
+      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
+      msg <- private$data_encrypt(private$pred_outgoing, self$crypt_key)
       private$ws$send(msg)
     },
     data_encrypt    = function(dat, key) {

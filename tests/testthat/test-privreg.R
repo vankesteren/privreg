@@ -16,8 +16,9 @@ y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 alice_data <- data.frame(y, X[, 1:5])
 bob_data   <- data.frame(y, X[, 6:10])
 
-alice <- PrivReg$new(y ~ . + 0, data = alice_data, name = "alice", verbose = TRUE)
-bob   <- PrivReg$new(y ~ . + 0, data = bob_data,   name = "bob  ", verbose = TRUE)
+alice <- PrivReg$new(y ~ . + 0, data = alice_data, name = "alice", verbose = TRUE, crypt_key = "maastricht")
+bob   <- PrivReg$new(y ~ . + 0, data = bob_data,   name = "bob  ", verbose = TRUE, crypt_key = "maastricht")
+
 alice$listen()
 bob$connect("127.0.0.1")
 
@@ -27,11 +28,37 @@ expect(bob$connected(), "bob not connected")
 expect(alice$connected(), "alice not connected")
 
 alice$verbose <- FALSE
-bob$verbose <- FALSE
+bob$verbose <- TRUE
 
 alice$start()
 
 Sys.sleep(10)
 
-cbind(true =  coef(lm(y ~ X + 0)), priv = c(alice$beta, bob$beta))
+cbind(true = coef(lm(y ~ X + 0)),
+      priv = c(alice$beta, bob$beta))
 
+
+
+# ensure no servers running
+httpuv::stopAllServers()
+
+# binomial outcome
+invlogit <- function(x) 1 / (1 + exp(-x))
+set.seed(45)
+S <- rWishart(1, 10, diag(10))[,,1] / 10
+X <- MASS::mvrnorm(100, rep(0, 10), S)
+b <- runif(10, -1, 1)
+y_binom  <- vapply(invlogit(X %*% b), function(p) rbinom(1, 1, prob = p), 1)
+alice_data <- data.frame(y = y_binom, X[, 1:5])
+bob_data   <- data.frame(y = y_binom, X[, 6:10])
+alice <- PrivReg$new(y ~ . + 0, data = alice_data, family = "binomial", name = "alice", verbose = TRUE, crypt_key = "maastricht")
+bob   <- PrivReg$new(y ~ . + 0, data = bob_data,   family = "binomial", name = "bob  ", verbose = TRUE, crypt_key = "maastricht")
+alice$listen()
+bob$connect("127.0.0.1")
+
+
+
+alice$start()
+
+cbind(true = coef(glm(y_binom ~ X + 0, family = "binomial")),
+      priv = c(alice$beta, bob$beta))

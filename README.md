@@ -1,6 +1,13 @@
-# `privreg`: Private regression using block coordinate descent
-
-[![Build Status](https://travis-ci.org/vankesteren/privreg.svg?branch=master)](https://travis-ci.org/vankesteren/privreg)
+<p align="center">
+  <img src="logo.png" width="300px"></img>
+  <br/>
+  <span>
+    <a href="https://CRAN.R-project.org/package=privreg"><img src="http://www.r-pkg.org/badges/version/privreg"></img></a>
+    <a href="https://travis-ci.org/vankesteren/privreg"><img src="https://travis-ci.org/vankesteren/privreg.svg?branch=master"></img></a>
+  </span>
+  <h5 align="center">Private regression using block coordinate descent</h5>
+</p>
+<br/>
 
 ## install
 ```r

@@ -30,12 +30,19 @@ expect(alice$connected(), "alice not connected")
 alice$verbose <- FALSE
 bob$verbose <- TRUE
 
-alice$start()
+alice$estimate()
 
 Sys.sleep(10)
 
-cbind(true = coef(lm(y ~ X + 0)),
-      priv = c(alice$beta, bob$beta))
+
+alice$bootstrap()
+
+Sys.sleep(10)
+
+# compare results to lm()
+summary(lm(y ~ X + 0))
+alice$summary()
+bob$summary()
 
 
 
@@ -58,7 +65,7 @@ bob$connect("127.0.0.1")
 
 
 
-alice$start()
+alice$estimate()
 
 cbind(true = coef(glm(y_binom ~ X + 0, family = "binomial")),
       priv = c(alice$beta, bob$beta))

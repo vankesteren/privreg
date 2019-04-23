@@ -14,7 +14,7 @@ Imports:
     websocket,
     R6,
     openssl
-Remotes: RStudio/websocket
+Remotes: RStudio/websocket, vankesteren/firatheme
 RoxygenNote: 6.1.1
 Suggests:
     testthat,

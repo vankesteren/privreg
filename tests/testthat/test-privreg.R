@@ -34,7 +34,6 @@ alice$estimate()
 
 Sys.sleep(10)
 
-
 alice$bootstrap()
 
 Sys.sleep(10)

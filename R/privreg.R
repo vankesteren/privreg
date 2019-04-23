@@ -181,7 +181,7 @@ PrivReg <- R6Class(
       tibble::as_tibble(private$betas) %>%
         dplyr::mutate(iter = 1:n()) %>%
         tidyr::gather("param", "value", -iter) %>%
-        ggplot2::ggplot(aes(x = iter, y = value, colour = param)) +
+        ggplot2::ggplot(ggplot2::aes(x = iter, y = value, colour = param)) +
         ggplot2::geom_line(size = 1) +
         firatheme::theme_fira() +
         firatheme::scale_colour_fira()

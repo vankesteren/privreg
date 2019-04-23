@@ -40,11 +40,17 @@ alice$listen()
 bob$connect("127.0.0.1") # if alice is on different computer, change ip
 
 # estimate
-alice$start()
+alice$estimate()
+
+# ...
+
+# bootstrap
+alice$bootstrap()
 
 # ...
 
 # compare results to lm()
-cbind(true = coef(lm(y ~ X + 0)), 
-      priv = c(alice$beta, bob$beta))
+summary(lm(y ~ X + 0))
+alice$summary()
+bob$summary()
 ```

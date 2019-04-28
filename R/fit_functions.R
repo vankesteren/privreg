@@ -10,6 +10,9 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
   pred  <- pred_other + pred_self
   prob  <- 1 / (1 + exp(-pred))
   wght  <- prob * (1 - prob)
+  eps   <- .Machine$double.eps * 10
+  if (any(wght < eps) || any(wght > 1 - eps))
+    wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
   work  <- pred + (y - prob) / wght
   y_res <- work - pred_other
   W     <- diag(c(wght))

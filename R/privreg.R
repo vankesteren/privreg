@@ -82,25 +82,33 @@ PrivReg <- R6Class(
     beta          = NULL,
     family        = "gaussian",
     formula       = NULL,
-    iter          = 0L,
-    max_iter      = 1e3L,
-    boot_iter     = NULL,
-    boot_max_iter = NULL,
+    control       = list(
+      iter          = 0L,
+      boot_iter     = 0L,
+      max_iter      = 1e3L,
+      tol           = 1e-8,
+      boot_tol      = 1e-5
+    ),
     verbose       = NULL,
     name          = NULL,
     crypt_key     = NULL,
     initialize    = function(formula, data, family = "gaussian", name = "alice",
                              verbose = FALSE, crypt_key = "testkey") {
-      private$X      <- model.matrix(formula, data)
-      private$y      <- unname(model.response(model.frame(formula, data)))
-      private$betas  <- matrix(0, nrow = self$max_iter, ncol = ncol(private$X))
-      private$pred_incoming <- rep(0, length(private$y))
-      private$pred_outgoing <- rep(0, length(private$y))
+      # public slots
       self$name      <- name
       self$verbose   <- verbose
       self$crypt_key <- crypt_key
       self$family    <- family
       self$formula   <- formula
+
+      # private slots
+      private$X             <- model.matrix(formula, data)
+      private$y             <- unname(model.response(model.frame(formula, data)))
+      private$N             <- nrow(private$X)
+      private$P             <- ncol(private$X)
+      private$betas         <- matrix(0, nrow = self$control$max_iter, ncol = private$P)
+      private$pred_incoming <- rep(0, private$N)
+      private$pred_outgoing <- rep(0, private$N)
     },
     listen        = function(port = 8080) {
       if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
@@ -137,16 +145,15 @@ PrivReg <- R6Class(
       if (!self$connected()) stop("Connect to another institution first.")
       if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
       private$fit_model()
-      self$iter <- self$iter + 1L
+      self$control$iter <- self$control$iter + 1L
       private$compute_pred()
       private$send_pred(type = "estimate")
     },
-    bootstrap     = function(n_sample = 1000) {
-      if (!self$connected())
-        stop("PrivReg disconnected. Please reconnect first.")
-
-      private$setup_bootstrap(n_sample)
-      private$send_message("bootstrap", n_samples = n_sample)
+    bootstrap     = function(R = 1000) {
+      if (!self$connected()) stop("PrivReg disconnected. Please reconnect first.")
+      private$R <- R
+      private$setup_bootstrap()
+      private$send_message("start_bootstrap", boot_idx_mat = private$boot_idx_mat)
     },
     disconnect    = function() {
       if (self$verbose) cat(paste(self$name, "| Disconnecting.\n"))
@@ -166,6 +173,11 @@ PrivReg <- R6Class(
       } else {
         return(FALSE)
       }
+    },
+    converged     = function() {
+      if (self$control$iter < 2) return(FALSE)
+      diffs <- abs(private$betas[self$control$iter] - private$betas[self$control$iter - 1])
+      if (all(diffs < self$control$tol)) TRUE else FALSE
     },
     plot_paths    = function() {
       if (!requireNamespace("firatheme", quietly = TRUE))
@@ -190,13 +202,13 @@ PrivReg <- R6Class(
       frml <- as.character(self$formula)
       if (is.null(self$beta)) {
         tab <- NULL
-      } else if (is.null(self$boot_iter)) {
+      } else if (is.null(private$boot_beta)) {
         tab <- cbind(self$beta)
         rownames(tab) <- colnames(private$X)
         colnames(tab) <- "est"
       } else {
-        se <- apply(private$boot_betas, 2, sd)
-        qq <- apply(private$boot_betas, 2, function(x) {
+        se <- apply(private$boot_beta, 2, sd)
+        qq <- apply(private$boot_beta, 2, function(x) {
           quantile(x, c(0.025, 0.975))
         })
         tt <- self$beta / se
@@ -209,10 +221,10 @@ PrivReg <- R6Class(
       cat(sep = "", "\n",
         "   Privacy-preserving GLM\n",
         "   ----------------------\n\n",
-        "   family:    ", self$family, "\n",
-        "   formula:   ", frml[2], " ", frml[1]," ", frml[3], "\n",
-        "   iter:      ", self$iter, "\n",
-        "   bootstrap: ", self$boot_iter, "\n\n",
+        "   family:      ", self$family, "\n",
+        "   formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
+        "   iterations:  ", self$control$iter, "\n",
+        "   bootstrap R: ", private$R, "\n\n",
         "   Parameter estimates\n",
         "   -------------------\n\n"
       )
@@ -221,15 +233,168 @@ PrivReg <- R6Class(
     }
   ),
   private = list(
-    X               = NULL,
-    y               = NULL,
-    betas           = NULL,
-    boot_betas      = NULL,
-    msg_incoming    = NULL,
-    pred_incoming   = NULL,
-    pred_outgoing   = NULL,
-    ws              = NULL,
-    srv             = NULL,
+    # slots
+    X               = NULL, # model matrix
+    y               = NULL, # outcome var
+    N               = NULL, # sample size
+    P               = NULL, # number of preds
+    R               = NULL, # bootstrap replicates
+
+    betas           = NULL, # parameters
+    pred_incoming   = NULL, # the incoming predictions
+    pred_outgoing   = NULL, # the outgoing predictions
+
+    boot_beta       = NULL, # replicated parameters
+    boot_idx_mat    = NULL, # bootstrap indices
+    boot_pred_in    = NULL, # boot pred mat incoming
+    boot_pred_out   = NULL, # boot pred mat outgoing
+    boot_converged  = NULL, # converg per replication
+
+    # estimation
+    run_estimate    = function() {
+      private$pred_incoming <- private$msg_incoming$data
+      private$fit_model()
+      private$compute_pred()
+      self$control$iter <- self$control$iter + 1L
+      if (self$verbose) cat(self$name, "| iteration:", self$control$iter, "\n")
+      if (self$converged()) {
+        message("PrivReg converged")
+        private$send_pred(type = "final_iter")
+      } else if (self$control$iter < self$control$max_iter) {
+        private$send_pred(type = "estimate")
+      } else {
+        message("Maximum iterations reached")
+        private$send_pred(type = "final_iter")
+      }
+    },
+    final_estimate  = function() {
+      private$pred_incoming <- private$msg_incoming$data
+      private$fit_model()
+      self$control$iter <- self$control$iter + 1L
+      private$compute_pred()
+      if (self$control$iter == self$control$max_iter) {
+        message("Maximum iterations reached")
+      } else {
+        message("Partner converged")
+      }
+    },
+    fit_model       = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing beta.\n"))
+      self$beta  <- switch(self$family,
+                           gaussian = fit_gaussian(private$y, private$X,
+                                                   private$pred_incoming),
+                           binomial = fit_binomial(private$y, private$X,
+                                                   private$pred_incoming,
+                                                   private$pred_outgoing)
+      )
+      private$betas[self$control$iter + 1, ] <- self$beta
+    },
+    compute_pred    = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
+      private$pred_outgoing <- private$X %*% self$beta
+    },
+    send_pred       = function(type) {
+      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
+      private$send_message(type = type, data = private$pred_outgoing)
+    },
+
+    # bootstrapping
+    setup_bootstrap = function() {
+      partner <- !is.null(private$msg_incoming[["boot_idx_mat"]])
+      if (!partner) {
+        # create a bootstrap matrix
+        private$boot_idx_mat <- private$create_boot_idx()
+      } else {
+        # use the partner boot matrix and set R
+        private$boot_idx_mat <- private$msg_incoming[["boot_idx_mat"]]
+        private$R            <- nrow(private$boot_idx_mat)
+      }
+
+      # make space for boot betas
+      private$boot_beta      <- matrix(self$beta, nrow = private$R,
+                                       ncol = private$P, byrow = TRUE)
+      private$boot_pred_in   <- matrix(0, nrow = private$R, ncol = private$N)
+      private$boot_pred_out  <- matrix(0, nrow = private$R, ncol = private$N)
+      private$boot_converged <- rep(FALSE, private$R)
+
+      if (partner) {
+        # first iteration of bootstrap
+        private$boot_pred_in <- matrix(private$y, private$R, private$N,
+                                       byrow = TRUE)
+        private$fit_boot_beta()
+        private$make_boot_pred()
+        self$control$boot_iter <- self$control$boot_iter + 1L
+        private$send_boot_pred(type = "bootstrap")
+      }
+    },
+    create_boot_idx = function() {
+      t(sapply(1:private$R, function(r) sample(private$N, replace = TRUE)))
+    },
+    run_bootstrap   = function() {
+      private$boot_pred_in <- private$msg_incoming$data
+      private$fit_boot_beta()
+      private$make_boot_pred()
+      self$control$boot_iter <- self$control$boot_iter + 1L
+      if (self$verbose) cat(self$name, "| iteration:", self$control$boot_iter, "\n")
+      if (self$verbose) cat(self$name, "| converged:", sum(private$boot_converged), "\n")
+      if (all(private$boot_converged)) {
+        message("All boot samples converged")
+        private$send_boot_pred(type = "final_boot")
+      } else if (self$control$boot_iter < self$control$max_iter) {
+        private$send_boot_pred(type = "bootstrap")
+      } else {
+        message("Maximum bootstrap iteration reached")
+        private$send_boot_pred(type = "final_boot")
+      }
+    },
+    final_bootstrap = function() {
+      private$boot_pred_in <- private$msg_incoming$data
+      private$fit_boot_beta()
+      self$control$boot_iter <- self$control$boot_iter + 1L
+      message("Maximum bootstrap iteration reached")
+    },
+    fit_boot_beta   = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing bootstrap beta.\n"))
+
+      for (r in 1:private$R) {
+        if (private$boot_converged[r]) next
+
+        # estimate
+        idx <- private$boot_idx_mat[r,]
+        boot_beta_r <- switch(self$family,
+          gaussian = fit_gaussian(private$y[idx], private$X[idx,],
+                                  private$boot_pred_in[r,]),
+          binomial = fit_binomial(private$y[idx], private$X[idx,],
+                                  private$boot_pred_in[r,],
+                                  private$boot_pred_out[r,])
+        )
+
+        # convergence check
+        diffs <- abs(private$boot_beta[r,] - boot_beta_r)
+        if (all(diffs < self$control$boot_tol)) {
+          private$boot_converged[r] <- TRUE
+        }
+
+        # assign
+        private$boot_beta[r,] <- boot_beta_r
+      }
+    },
+    make_boot_pred  = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
+
+      for (r in 1:private$R) {
+        idx <- private$boot_idx_mat[r,]
+        private$boot_pred_out[r,] <- private$X[idx,] %*% private$boot_beta[r,]
+      }
+    },
+    send_boot_pred  = function(type) {
+      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
+      private$send_message(type = type, data = private$boot_pred_out)
+    },
+
+    # networking
+    ws              = NULL, # the websocket object
+    srv             = NULL, # the httpuv server object
     setup_ws_server = function() {
       # httpuv websocket has different api than websocket :(
       # see https://github.com/rstudio/httpuv/blob/12744e32b0ef8480d8cffb12e9888cbae7f12778/R/httpuv.R#L291
@@ -268,90 +433,9 @@ PrivReg <- R6Class(
         cat(self$name, "| Connection closed.\n")
       })
     },
-    setup_bootstrap = function(n_sample) {
-      # create a bootstrap matrix
-      private$boot_betas <- matrix(0, nrow = n_sample, ncol = length(self$beta))
-      self$boot_max_iter <- n_sample
-      self$boot_iter     <- 0L
-    },
-    run_estimate    = function() {
-      private$pred_incoming <- private$msg_incoming$data
-      private$fit_model()
-      private$compute_pred()
-      self$iter <- self$iter + 1L
-      if (self$verbose) cat(self$name, "| iteration:", self$iter, "\n")
-      if (self$iter < self$max_iter) {
-        private$send_pred(type = "estimate")
-      } else {
-        message("Maximum iterations reached")
-        private$send_pred(type = "final_iter")
-      }
-    },
-    final_estimate  = function() {
-      private$pred_incoming <- private$msg_incoming$data
-      private$fit_model()
-      self$iter <- self$iter + 1L
-      private$compute_pred()
-      message("Maximum iterations reached")
-    },
-    run_bootstrap   = function() {
-      if (!is.null(private$msg_incoming$n_samples)) {
-        private$setup_bootstrap(private$msg_incoming$n_samples)
-      } else {
-        private$pred_incoming <- private$msg_incoming$data
-      }
-      private$fit_boot_beta()
-      private$compute_pred()
-      self$boot_iter <- self$boot_iter + 1L
-      if (self$verbose) cat(self$name, "| iteration:", self$boot_iter, "\n")
-      if (self$boot_iter < self$boot_max_iter) {
-        private$send_pred(type = "bootstrap")
-      } else {
-        message("Maximum bootstrap iteration reached")
-        self$beta <- private$betas[self$iter, ]
-        private$send_pred(type = "final_boot")
-      }
-    },
-    final_bootstrap = function() {
-      private$pred_incoming <- private$msg_incoming$data
-      private$fit_boot_beta()
-      self$boot_iter <- self$boot_iter + 1L
-      self$beta <- private$betas[self$iter, ]
-      message("Maximum bootstrap iteration reached")
-    },
-    fit_model       = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing beta.\n"))
-      self$beta  <- switch(self$family,
-        gaussian = fit_gaussian(private$y, private$X,
-                                private$pred_incoming),
-        binomial = fit_binomial(private$y, private$X,
-                                private$pred_incoming,
-                                private$pred_outgoing)
-      )
-      private$betas[self$iter + 1, ] <- self$beta
-    },
-    fit_boot_beta   = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing bootstrap beta.\n"))
-      idx <- sample(nrow(private$X), replace = TRUE)
-      self$beta  <- switch(self$family,
-        gaussian = fit_gaussian(private$y[idx], private$X[idx,],
-                                private$pred_incoming[idx]),
-        binomial = fit_binomial(private$y[idx], private$X[idx,],
-                                private$pred_incoming[idx],
-                                private$pred_outgoing[idx])
-      )
-      private$boot_betas[self$boot_iter + 1, ] <- self$beta
-    },
-    compute_pred    = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
-      private$pred_outgoing <- private$X %*% self$beta
-    },
-    send_pred       = function(type) {
-      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
-      msg_raw <- list(type = type, data = private$pred_outgoing)
-      msg_enc <- private$data_encrypt(msg_raw, self$crypt_key)
-      private$ws$send(msg_enc)
-    },
+
+    # communication
+    msg_incoming    = NULL, # the incoming message
     data_encrypt    = function(dat, key) {
       # converts numeric vector to secure binary message
       serialized <- serialize(dat, NULL)
@@ -362,8 +446,8 @@ PrivReg <- R6Class(
       key_bytes <- charToRaw(openssl::md5(key))
       unserialize(openssl::aes_cbc_decrypt(raw, key_bytes, NULL))
     },
-    send_message    = function(message, ...) {
-      msg_raw <- list(type = message, ...)
+    send_message    = function(type, ...) {
+      msg_raw <- list(type = type, ...)
       msg_enc <- private$data_encrypt(msg_raw, self$crypt_key)
       private$ws$send(msg_enc)
     },
@@ -372,10 +456,11 @@ PrivReg <- R6Class(
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 
       switch(private$msg_incoming$type,
-        "bootstrap"  = private$run_bootstrap(),
-        "estimate"   = private$run_estimate(),
-        "final_iter" = private$final_estimate(),
-        "final_boot" = private$final_bootstrap()
+        "start_bootstrap" = private$setup_bootstrap(),
+        "bootstrap"       = private$run_bootstrap(),
+        "estimate"        = private$run_estimate(),
+        "final_iter"      = private$final_estimate(),
+        "final_boot"      = private$final_bootstrap()
       )
     }
   )

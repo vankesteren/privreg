@@ -207,10 +207,9 @@ PrivReg <- R6Class(
         rownames(tab) <- colnames(private$X)
         colnames(tab) <- "est"
       } else {
-        se <- apply(private$boot_beta, 2, sd)
-        qq <- apply(private$boot_beta, 2, function(x) {
-          quantile(x, c(0.025, 0.975))
-        })
+        se <- apply(private$boot_beta[private$boot_converged,], 2, sd)
+        qq <- apply(private$boot_beta[private$boot_converged,], 2, quantile,
+                    c(0.025, 0.975))
         tt <- self$beta / se
         pp <- pt(-abs(tt), nrow(private$X) - ncol(private$X)) * 2
         tab <- cbind(self$beta, se, tt, pp, t(qq))
@@ -224,7 +223,7 @@ PrivReg <- R6Class(
         "   family:      ", self$family, "\n",
         "   formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
         "   iterations:  ", self$control$iter, "\n",
-        "   bootstrap R: ", private$R, "\n\n",
+        "   bootstrap R: ", sum(private$boot_converged), "\n\n",
         "   Parameter estimates\n",
         "   -------------------\n\n"
       )
@@ -351,7 +350,12 @@ PrivReg <- R6Class(
       private$boot_pred_in <- private$msg_incoming$data
       private$fit_boot_beta()
       self$control$boot_iter <- self$control$boot_iter + 1L
-      message("Maximum bootstrap iteration reached")
+      if (self$control$boot_iter == self$control$max_iter) {
+        message("Maximum bootstrap iteration reached")
+      } else {
+        message("Partner converged. Here: ", sum(private$boot_converged),
+                "/", private$R)
+      }
     },
     fit_boot_beta   = function() {
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap beta.\n"))

@@ -83,15 +83,19 @@ PrivReg <- R6Class(
     family        = "gaussian",
     formula       = NULL,
     control       = list(
-      iter          = 0L,
-      boot_iter     = 0L,
-      max_iter      = 1e3L,
-      tol           = 1e-8,
-      boot_tol      = 1e-5
+      iter      = 0L,
+      boot_iter = 0L,
+      max_iter  = 1e3L,
+      tol       = 1e-8,
+      boot_tol  = 1e-5
     ),
     verbose       = NULL,
     name          = NULL,
     crypt_key     = NULL,
+    timings       = list(
+      estimate  = list(start = NULL, end = NULL),
+      bootstrap = list(start = NULL, end = NULL)
+    ),
     initialize    = function(formula, data, family = "gaussian", name = "alice",
                              verbose = FALSE, crypt_key = "testkey") {
       # public slots
@@ -144,6 +148,7 @@ PrivReg <- R6Class(
     estimate      = function() {
       if (!self$connected()) stop("Connect to another institution first.")
       if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
+      self$timings$estimate$start <- Sys.time()
       private$fit_model()
       self$control$iter <- self$control$iter + 1L
       private$compute_pred()
@@ -151,6 +156,7 @@ PrivReg <- R6Class(
     },
     bootstrap     = function(R = 1000) {
       if (!self$connected()) stop("PrivReg disconnected. Please reconnect first.")
+      self$timings$bootstrap$start <- Sys.time()
       private$R <- R
       private$setup_bootstrap()
       private$send_message("start_bootstrap", boot_idx_mat = private$boot_idx_mat)
@@ -229,6 +235,24 @@ PrivReg <- R6Class(
       )
       print(round(tab, 4))
       invisible(tab)
+    },
+    elapsed       = function() {
+      if (!is.null(self$timings$estimate$end)) {
+        est_time <- self$timings$estimate$end - self$timings$estimate$start
+        cat("Estimation took", format(est_time), "\n")
+        units(est_time) <- "secs"
+      }
+
+      if (!is.null(self$timings$estimate$end)) {
+        boot_time <- self$timings$bootstrap$end - self$timings$bootstrap$start
+        cat("Bootstrapping took", format(boot_time), "\n")
+        units(boot_time) <- "secs"
+      }
+
+      invisible(data.frame(
+        Estimation = est_time,
+        Bootstrap  = boot_time
+      ))
     }
   ),
   private = list(
@@ -251,6 +275,8 @@ PrivReg <- R6Class(
 
     # estimation
     run_estimate    = function() {
+      if (is.null(self$timings$estimate$start))
+        self$timings$estimate$start <- Sys.time()
       private$pred_incoming <- private$msg_incoming$data
       private$fit_model()
       private$compute_pred()
@@ -258,11 +284,13 @@ PrivReg <- R6Class(
       if (self$verbose) cat(self$name, "| iteration:", self$control$iter, "\n")
       if (self$converged()) {
         message("PrivReg converged")
+        self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
       } else if (self$control$iter < self$control$max_iter) {
         private$send_pred(type = "estimate")
       } else {
         message("Maximum iterations reached")
+        self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
       }
     },
@@ -271,6 +299,7 @@ PrivReg <- R6Class(
       private$fit_model()
       self$control$iter <- self$control$iter + 1L
       private$compute_pred()
+      self$timings$estimate$end <- Sys.time()
       if (self$control$iter == self$control$max_iter) {
         message("Maximum iterations reached")
       } else {
@@ -318,6 +347,7 @@ PrivReg <- R6Class(
 
       if (partner) {
         # first iteration of bootstrap
+        self$timings$bootstrap$start <- Sys.time()
         private$boot_pred_in <- matrix(private$y, private$R, private$N,
                                        byrow = TRUE)
         private$fit_boot_beta()
@@ -338,15 +368,18 @@ PrivReg <- R6Class(
       if (self$verbose) cat(self$name, "| converged:", sum(private$boot_converged), "\n")
       if (all(private$boot_converged)) {
         message("All boot samples converged")
+        self$timings$bootstrap$end <- Sys.time()
         private$send_boot_pred(type = "final_boot")
       } else if (self$control$boot_iter < self$control$max_iter) {
         private$send_boot_pred(type = "bootstrap")
       } else {
         message("Maximum bootstrap iteration reached")
+        self$timings$bootstrap$end <- Sys.time()
         private$send_boot_pred(type = "final_boot")
       }
     },
     final_bootstrap = function() {
+      self$timings$bootstrap$end <- Sys.time()
       private$boot_pred_in <- private$msg_incoming$data
       private$fit_boot_beta()
       self$control$boot_iter <- self$control$boot_iter + 1L

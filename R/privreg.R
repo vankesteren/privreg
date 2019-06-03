@@ -241,18 +241,20 @@ PrivReg <- R6Class(
         est_time <- self$timings$estimate$end - self$timings$estimate$start
         cat("Estimation took", format(est_time), "\n")
         units(est_time) <- "secs"
-      }
 
-      if (!is.null(self$timings$estimate$end)) {
-        boot_time <- self$timings$bootstrap$end - self$timings$bootstrap$start
-        cat("Bootstrapping took", format(boot_time), "\n")
-        units(boot_time) <- "secs"
+        if (!is.null(self$timings$bootstrap$end)) {
+          boot_time <- self$timings$bootstrap$end - self$timings$bootstrap$start
+          cat("Bootstrapping took", format(boot_time), "\n")
+          units(boot_time) <- "secs"
+        }
+        invisible(data.frame(
+          Estimation = est_time,
+          Bootstrap  = ifelse(is.null(self$timings$bootstrap$end), NA,
+                              boot_time)
+        ))
+      } else {
+        cat("No timing information.")
       }
-
-      invisible(data.frame(
-        Estimation = est_time,
-        Bootstrap  = boot_time
-      ))
     }
   ),
   private = list(

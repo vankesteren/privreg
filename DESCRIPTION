@@ -22,4 +22,5 @@ Suggests:
     dplyr,
     ggplot2,
     tibble,
-    tidyr
+    tidyr,
+    MASS

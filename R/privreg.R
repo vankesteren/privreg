@@ -155,7 +155,10 @@ PrivReg <- R6Class(
       private$send_pred(type = "estimate")
     },
     bootstrap     = function(R = 1000) {
-      if (!self$connected()) stop("PrivReg disconnected. Please reconnect first.")
+      if (!self$connected())
+        stop("PrivReg disconnected. Please reconnect first.")
+      if (!self$converged())
+        stop("No converged parameter estimates found. Please estimate() first.")
       self$timings$bootstrap$start <- Sys.time()
       private$R <- R
       private$setup_bootstrap()
@@ -229,7 +232,8 @@ PrivReg <- R6Class(
         "   family:      ", self$family, "\n",
         "   formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
         "   iterations:  ", self$control$iter, "\n",
-        "   bootstrap R: ", sum(private$boot_converged), "\n\n",
+        "   bootstrap R: ", sum(private$boot_converged), "/",
+                            length(private$boot_converged),  "\n\n",
         "   Parameter estimates\n",
         "   -------------------\n\n"
       )
@@ -395,17 +399,31 @@ PrivReg <- R6Class(
     fit_boot_beta   = function() {
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap beta.\n"))
 
+      pred <- private$pred_outgoing + private$pred_incoming
+
       for (r in 1:private$R) {
         if (private$boot_converged[r]) next
 
         # estimate
-        idx <- private$boot_idx_mat[r,]
+        pred_r      <- private$boot_pred_in[r,  ] + private$boot_pred_out[r, ]
+        idx         <- private$boot_idx_mat[r,]
+
         boot_beta_r <- switch(self$family,
-          gaussian = fit_gaussian(private$y[idx], private$X[idx,],
-                                  private$boot_pred_in[r,]),
-          binomial = fit_binomial(private$y[idx], private$X[idx,],
-                                  private$boot_pred_in[r,],
-                                  private$boot_pred_out[r,])
+          gaussian = boot_fit_gaussian(
+            y               = private$y,
+            X               = private$X,
+            pred            = pred,
+            idx             = idx,
+            boot_pred_other = private$boot_pred_in[r, ]
+          ),
+          binomial = boot_fit_binomial(
+            y               = private$y,
+            X               = private$X,
+            pred            = pred,
+            idx             = idx,
+            boot_pred_other = private$boot_pred_in[r, ],
+            boot_pred_self  = private$boot_pred_out[r, ]
+          )
         )
 
         # convergence check
@@ -422,8 +440,7 @@ PrivReg <- R6Class(
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
 
       for (r in 1:private$R) {
-        idx <- private$boot_idx_mat[r,]
-        private$boot_pred_out[r,] <- private$X[idx,] %*% private$boot_beta[r,]
+        private$boot_pred_out[r,] <- private$X %*% private$boot_beta[r,]
       }
     },
     send_boot_pred  = function(type) {

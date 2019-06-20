@@ -5,6 +5,14 @@ fit_gaussian <- function(y, X, pred_other) {
   return(c(b_hat))
 }
 
+boot_fit_gaussian <- function(y, X, pred, idx, boot_pred_other) {
+  # semiparametric bootstrap: boot residuals
+  y_boot <- (y - pred)[idx] + pred
+  y_res  <- y_boot - boot_pred_other
+  b_hat  <- solve(crossprod(X), crossprod(X, y_res))
+  return(c(b_hat))
+}
+
 fit_binomial <- function(y, X, pred_other, pred_self) {
   # create working response for IRLS update
   pred  <- pred_other + pred_self
@@ -17,5 +25,27 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
   y_res <- work - pred_other
   W     <- diag(c(wght))
   b_hat <- solve(crossprod(X, W %*% X), crossprod(X, W %*% y_res))
+  return(c(b_hat))
+}
+
+boot_fit_binomial <- function(y, X, pred, idx, boot_pred_other, boot_pred_self) {
+  # create working response for IRLS update
+  prob  <- 1 / (1 + exp(-pred))
+  wght  <- prob * (1 - prob)
+  eps   <- .Machine$double.eps * 10
+  if (any(wght < eps) || any(wght > 1 - eps))
+    wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
+
+
+  # semiparametric bootstrap on the working response level
+  work_boot  <- pred + (y - prob)[idx] / wght
+  y_res <- work_boot - boot_pred_other
+
+  # create weight matrix
+  W <- diag(c(wght))
+
+  # compute b_hat
+  b_hat <- solve(crossprod(X, W %*% X), crossprod(X, W %*% y_res))
+
   return(c(b_hat))
 }

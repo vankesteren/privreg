@@ -1,7 +1,7 @@
 Package: privreg
 Type: Package
 Title: Privacy-preserving Regression
-Version: 0.5.0
+Version: 0.5.1
 Author: Erik-Jan van Kesteren
 Maintainer: Erik-Jan van Kesteren <e.vankesteren1@uu.nl>
 Description: Perform regression on vertically partitioned data using block
@@ -14,7 +14,7 @@ Imports:
     websocket,
     R6,
     openssl
-Remotes: RStudio/websocket, vankesteren/firatheme
+Remotes: vankesteren/firatheme
 RoxygenNote: 6.1.1
 Suggests:
     testthat,

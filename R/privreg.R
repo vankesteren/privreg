@@ -438,10 +438,8 @@ PrivReg <- R6Class(
     },
     make_boot_pred  = function() {
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
-
-      for (r in 1:private$R) {
-        private$boot_pred_out[r,] <- private$X %*% private$boot_beta[r,]
-      }
+      # each row is one length-n prediction
+      private$boot_pred_out <- tcrossprod(private$boot_beta, private$X)
     },
     send_boot_pred  = function(type) {
       if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))

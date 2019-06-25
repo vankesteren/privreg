@@ -23,8 +23,8 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
     wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
   work  <- pred + (y - prob) / wght
   y_res <- work - pred_other
-  W     <- diag(c(wght))
-  b_hat <- solve(crossprod(X, W %*% X), crossprod(X, W %*% y_res))
+  w     <- c(wght)
+  b_hat <- solve(crossprod(X, w * X), crossprod(X, w * y_res))
   return(c(b_hat))
 }
 
@@ -42,10 +42,10 @@ boot_fit_binomial <- function(y, X, pred, idx, boot_pred_other, boot_pred_self) 
   y_res <- work_boot - boot_pred_other
 
   # create weight matrix
-  W <- diag(c(wght))
+  w <- c(wght)
 
   # compute b_hat
-  b_hat <- solve(crossprod(X, W %*% X), crossprod(X, W %*% y_res))
+  b_hat <- solve(crossprod(X, w * X), crossprod(X, w * y_res))
 
   return(c(b_hat))
 }

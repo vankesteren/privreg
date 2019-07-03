@@ -405,24 +405,21 @@ PrivReg <- R6Class(
         if (private$boot_converged[r]) next
 
         # estimate
-        pred_r      <- private$boot_pred_in[r,  ] + private$boot_pred_out[r, ]
-        idx         <- private$boot_idx_mat[r,]
-
         boot_beta_r <- switch(self$family,
           gaussian = boot_fit_gaussian(
             y               = private$y,
             X               = private$X,
             pred            = pred,
-            idx             = idx,
+            idx             = private$boot_idx_mat[r, ],
             boot_pred_other = private$boot_pred_in[r, ]
           ),
           binomial = boot_fit_binomial(
             y               = private$y,
             X               = private$X,
             pred            = pred,
-            idx             = idx,
+            idx             = private$boot_idx_mat[r, ],
             boot_pred_other = private$boot_pred_in[r, ],
-            boot_pred_self  = private$boot_pred_out[r, ]
+            boot_pred_self  = private$boot_pred_out[r,]
           )
         )
 

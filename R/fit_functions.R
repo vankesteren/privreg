@@ -36,7 +36,6 @@ boot_fit_binomial <- function(y, X, pred, idx, boot_pred_other, boot_pred_self) 
   if (any(wght < eps) || any(wght > 1 - eps))
     wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
 
-
   # semiparametric bootstrap on the working response level
   work_boot  <- pred + (y - prob)[idx] / wght
   y_res <- work_boot - boot_pred_other

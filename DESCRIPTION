@@ -13,7 +13,8 @@ Imports:
     httpuv,
     websocket,
     R6,
-    openssl
+    openssl,
+    Matrix
 Remotes: vankesteren/firatheme
 RoxygenNote: 6.1.1
 Suggests:

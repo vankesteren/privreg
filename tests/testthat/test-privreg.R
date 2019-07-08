@@ -9,9 +9,9 @@ httpuv::stopAllServers()
 # create test data
 set.seed(45)
 S <- rWishart(1, 10, diag(10))[,,1] / 10
-X <- MASS::mvrnorm(100000, rep(0, 10), S)
+X <- MASS::mvrnorm(100, rep(0, 10), S)
 b <- runif(10, -1, 1)
-y <- X %*% b + rnorm(100000, sd = sqrt(b %*% S %*% b))
+y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
 
 alice_data <- data.frame(y, X[, 1:5])
 bob_data   <- data.frame(y, X[, 6:10])
@@ -40,19 +40,8 @@ alice$verbose <- FALSE
 bob$verbose <- TRUE
 
 # do the thing
-#alice$estimate()
-
-alice$beta <- coef(lm(y~X+0))[1:5]
-alice$.__enclos_env__$private$betas[1,] <- alice$beta
-alice$.__enclos_env__$private$betas[2,] <- alice$beta
-alice$control$iter <- 2
-
-
-bob$beta <- coef(lm(y~X+0))[6:10]
-bob$.__enclos_env__$private$betas[1,] <- bob$beta
-bob$.__enclos_env__$private$betas[2,] <- bob$beta
-bob$control$iter <- 2
-alice$bootstrap(R = 100)
+alice$estimate()
+alice$bootstrap(R = 1000)
 
 # compare results to lm()
 summary(lm(y ~ X + 0))
@@ -98,7 +87,7 @@ bob$connect("127.0.0.1")
 
 # do the thing
 alice$estimate()
-alice$bootstrap(R = 100)
+alice$bootstrap(R = 5000)
 
 # compare results to glm()
 summary(glm(y_binom ~ X + 0, family = "binomial"))

@@ -366,8 +366,8 @@ PrivReg <- R6Class(
       t(sapply(1:private$R, function(r) sample(private$N, replace = TRUE)))
     },
     run_bootstrap   = function() {
-      idx <- private$msg_incoming$idx
-      private$boot_pred_in[idx,] <- private$msg_incoming$data
+      conv <- private$msg_incoming$conv
+      private$boot_pred_in[conv,] <- private$msg_incoming$data
       private$fit_boot_beta()
       private$make_boot_pred()
       self$control$boot_iter <- self$control$boot_iter + 1L
@@ -387,7 +387,6 @@ PrivReg <- R6Class(
     },
     final_bootstrap = function() {
       self$timings$bootstrap$end <- Sys.time()
-      private$boot_pred_in <- private$msg_incoming$data
       private$fit_boot_beta()
       self$control$boot_iter <- self$control$boot_iter + 1L
       if (self$control$boot_iter == self$control$max_iter) {
@@ -436,17 +435,17 @@ PrivReg <- R6Class(
     },
     make_boot_pred  = function() {
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
-      idx <- which(!private$boot_converged)
       # each row is one length-n prediction
-      private$boot_pred_out[idx, ] <- tcrossprod(private$boot_beta[idx, ], private$X)
+      conv <- which(!private$boot_converged)
+      private$boot_pred_out[conv, ] <- tcrossprod(private$boot_beta[conv, ], private$X)
     },
     send_boot_pred  = function(type) {
       if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
       # only send the nonconverged ones!
-      idx <- which(!private$boot_converged)
+      conv <- which(!private$boot_converged)
       private$send_message(type = type,
-                           data = private$boot_pred_out[idx,],
-                           idx  = idx)
+                           data = private$boot_pred_out[conv,],
+                           conv = conv)
     },
 
     # networking
@@ -530,7 +529,7 @@ PrivReg <- R6Class(
     },
     receive_message = function() {
       private$msg_incoming <- private$data_decrypt(private$msg_enc_in, self$crypt_key)
-      #browser()
+
       # chunking stuff
       if (private$msg_incoming$type == "chunk") {
         # message is chunked!

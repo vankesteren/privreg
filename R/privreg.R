@@ -366,7 +366,8 @@ PrivReg <- R6Class(
       t(sapply(1:private$R, function(r) sample(private$N, replace = TRUE)))
     },
     run_bootstrap   = function() {
-      private$boot_pred_in <- private$msg_incoming$data
+      conv <- private$msg_incoming$conv
+      private$boot_pred_in[conv,] <- private$msg_incoming$data
       private$fit_boot_beta()
       private$make_boot_pred()
       self$control$boot_iter <- self$control$boot_iter + 1L
@@ -386,7 +387,6 @@ PrivReg <- R6Class(
     },
     final_bootstrap = function() {
       self$timings$bootstrap$end <- Sys.time()
-      private$boot_pred_in <- private$msg_incoming$data
       private$fit_boot_beta()
       self$control$boot_iter <- self$control$boot_iter + 1L
       if (self$control$boot_iter == self$control$max_iter) {
@@ -436,11 +436,16 @@ PrivReg <- R6Class(
     make_boot_pred  = function() {
       if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
       # each row is one length-n prediction
-      private$boot_pred_out <- tcrossprod(private$boot_beta, private$X)
+      conv <- which(!private$boot_converged)
+      private$boot_pred_out[conv, ] <- tcrossprod(private$boot_beta[conv, ], private$X)
     },
     send_boot_pred  = function(type) {
       if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
-      private$send_message(type = type, data = private$boot_pred_out)
+      # only send the nonconverged ones!
+      conv <- which(!private$boot_converged)
+      private$send_message(type = type,
+                           data = private$boot_pred_out[conv,],
+                           conv = conv)
     },
 
     # networking
@@ -452,14 +457,12 @@ PrivReg <- R6Class(
       if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
 
       private$ws$onMessage(function(binary, message) {
-
         if (!binary) {
           # something went wrong
           private$disconnect()
           stop("Message received was not binary.")
         }
-
-        private$msg_incoming <- private$data_decrypt(message, self$crypt_key)
+        private$msg_enc_in <- message
         private$receive_message()
       })
 
@@ -476,7 +479,7 @@ PrivReg <- R6Class(
       })
 
       private$ws$onMessage(function(event) {
-        private$msg_incoming <- private$data_decrypt(event$data, self$crypt_key)
+        private$msg_enc_in <- event$data
         private$receive_message()
       })
 
@@ -486,7 +489,9 @@ PrivReg <- R6Class(
     },
 
     # communication
-    msg_incoming    = NULL, # the incoming message
+    msg_incoming    = NULL, # the decrypted incoming message
+    msg_enc_in      = NULL, # the encrypted incoming message
+    msg_chunks_in   = list(), # bits for chunked messages
     data_encrypt    = function(dat, key) {
       # converts numeric vector to secure binary message
       serialized <- serialize(dat, NULL)
@@ -500,9 +505,51 @@ PrivReg <- R6Class(
     send_message    = function(type, ...) {
       msg_raw <- list(type = type, ...)
       msg_enc <- private$data_encrypt(msg_raw, self$crypt_key)
-      private$ws$send(msg_enc)
+
+      msg_len <- length(msg_enc)
+      if (msg_len < 31457280) { # 30 MB maximum for websocket connection
+        private$ws$send(msg_enc)
+      } else {
+        # now we need to chunk!
+        cuts    <- c(seq(0, msg_len, 31457280), msg_len) # 30MB chunks
+        cut_len <- length(cuts)
+        if (self$verbose)
+          cat(paste(self$name, "| Transmit data > 30MB, chunking ... \n"))
+        for (i in 2:cut_len) {
+          bits <- msg_enc[(cuts[i - 1] + 1):cuts[i]]
+          type <- ifelse(i == cut_len, "chunk_last", "chunk")
+          part_msg_raw <- list(type = type, no = i - 1, bits = bits)
+          part_msg_enc <- private$data_encrypt(part_msg_raw, self$crypt_key)
+          private$ws$send(part_msg_enc)
+          if (self$verbose)
+            cat(paste(self$name, "|", i - 1, "/", cut_len - 1, "\n"))
+        }
+      }
+
     },
     receive_message = function() {
+      private$msg_incoming <- private$data_decrypt(private$msg_enc_in, self$crypt_key)
+
+      # chunking stuff
+      if (private$msg_incoming$type == "chunk") {
+        # message is chunked!
+        no <- private$msg_incoming$no
+        if (self$verbose)
+          cat(paste(self$name, "| Receiving chunked message,", no, "\n"))
+        private$msg_chunks_in[[no]] <- private$msg_incoming$bits
+        return()
+      }
+      if (private$msg_incoming$type == "chunk_last") {
+        no <- private$msg_incoming$no
+        if (self$verbose)
+          cat(paste(self$name, "| Receiving chunked message,", no, "(end)\n"))
+        private$msg_enc_in <- c(unlist(private$msg_chunks_in),
+                                private$msg_incoming$bits)
+        private$msg_chunks_in <- NULL
+        private$receive_message()
+        return()
+      }
+
       if (self$verbose)
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 

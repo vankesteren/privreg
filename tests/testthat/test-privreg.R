@@ -41,7 +41,7 @@ bob$verbose <- TRUE
 
 # do the thing
 alice$estimate()
-alice$bootstrap(R = 100)
+alice$bootstrap(R = 1000)
 
 # compare results to lm()
 summary(lm(y ~ X + 0))
@@ -87,7 +87,7 @@ bob$connect("127.0.0.1")
 
 # do the thing
 alice$estimate()
-alice$bootstrap(R = 100)
+alice$bootstrap(R = 5000)
 
 # compare results to glm()
 summary(glm(y_binom ~ X + 0, family = "binomial"))

@@ -110,9 +110,29 @@ PrivReg <- R6Class(
       private$y             <- unname(model.response(model.frame(formula, data)))
       private$N             <- nrow(private$X)
       private$P             <- ncol(private$X)
-      private$betas         <- matrix(0, nrow = self$control$max_iter, ncol = private$P)
+      private$betas         <- matrix(0, nrow = self$control$max_iter,
+                                      ncol = private$P)
       private$pred_incoming <- rep(0, private$N)
       private$pred_outgoing <- rep(0, private$N)
+    },
+    set_control   = function(iter = 0L, boot_iter = 0L, max_iter = 1e3L,
+                             tol = 1e-8, boot_tol = 1e-5) {
+      self$control <- list(
+        iter      = iter,
+        boot_iter = boot_iter,
+        max_iter  = max_iter,
+        tol       = tol,
+        boot_tol  = boot_tol
+      )
+
+      if (nrow(private$betas) > self$control$max_iter)
+        private$betas <- private$betas[1:self$control$max_iter]
+      if (nrow(private$betas) < self$control$max_iter)
+        private$betas <- rbind(
+          private$betas,
+          matrix(0, nrow = self$control$max_iter - nrow(private$betas),
+                 ncol = private$P)
+        )
     },
     listen        = function(port = 8080) {
       if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))

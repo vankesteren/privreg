@@ -330,6 +330,8 @@ PrivReg <- R6Class(
         message("Maximum iterations reached")
       } else {
         message("Partner converged")
+        private$fit_model()
+        self$control$iter <- self$control$iter + 1L
       }
     },
     fit_model       = function() {

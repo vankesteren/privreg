@@ -189,23 +189,22 @@ PrivReg <- R6Class(
       if (all(diffs < self$control$tol)) TRUE else FALSE
     },
     plot_paths    = function() {
+      if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Install ggplot2")
+      if (!requireNamespace("dplyr", quietly = TRUE))   stop("Install dplyr")
+      if (!requireNamespace("tidyr", quietly = TRUE))   stop("Install tidyr")
+      if (!requireNamespace("tibble", quietly = TRUE))  stop("Install tibble")
       if (!requireNamespace("firatheme", quietly = TRUE))
         stop("Install firatheme: devtools::install_github(\"vankesteren/firatheme\")")
-      if (!requireNamespace("ggplot2", quietly = TRUE))
-        stop("Install ggplot2")
-      if (!requireNamespace("dplyr", quietly = TRUE))
-        stop("Install dplyr")
-      if (!requireNamespace("tidyr", quietly = TRUE))
-        stop("Install tidyr")
-
       `%>%` <- dplyr::`%>%`
-      tibble::as_tibble(private$betas) %>%
-        dplyr::mutate(iter = 1:n()) %>%
+
+      tibble::as_tibble(private$betas[1:self$control$iter,]) %>%
+        dplyr::mutate(iter = 1:self$control$iter) %>%
         tidyr::gather("param", "value", -iter) %>%
         ggplot2::ggplot(ggplot2::aes(x = iter, y = value, colour = param)) +
         ggplot2::geom_line(size = 1) +
         firatheme::theme_fira() +
-        firatheme::scale_colour_fira()
+        firatheme::scale_colour_fira() +
+        ggplot2::labs(x = "Iteration", y = "Beta value", color = "Predictor")
     },
     summary       = function() {
       frml <- as.character(self$formula)

@@ -216,8 +216,9 @@ PrivReg <- R6Class(
       if (!requireNamespace("firatheme", quietly = TRUE))
         stop("Install firatheme: devtools::install_github(\"vankesteren/firatheme\")")
       `%>%` <- dplyr::`%>%`
-
-      tibble::as_tibble(private$betas[1:self$control$iter,]) %>%
+      betas <- private$betas[1:self$control$iter,]
+      colnames(betas) <- colnames(private$X)
+      tibble::as_tibble(betas) %>%
         dplyr::mutate(iter = 1:self$control$iter) %>%
         tidyr::gather("param", "value", -iter) %>%
         ggplot2::ggplot(ggplot2::aes(x = iter, y = value, colour = param)) +

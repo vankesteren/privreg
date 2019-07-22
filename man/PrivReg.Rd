@@ -48,7 +48,7 @@ alice$plot_paths()
 \code{$connect()} connects to a listening partner institution
 \code{$disconnect()} disconnects from the partner institution
 \code{$estimate()} computes parameter estimates through block coordinate descent
-\code{$bootstrap()} computes bootstrap distribution of parameters using blockwise bootstrap
+\code{$bootstrap()} computes bootstrap distribution of parameters using semiparametric bootstrap
 \code{$summary()} displays a summary of the object
 \code{$plot_paths()} plots the paths of the parameters over the estimation iterations
 }

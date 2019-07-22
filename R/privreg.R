@@ -38,7 +38,7 @@
 #' \code{$connect()} connects to a listening partner institution
 #' \code{$disconnect()} disconnects from the partner institution
 #' \code{$estimate()} computes parameter estimates through block coordinate descent
-#' \code{$bootstrap()} computes bootstrap distribution of parameters using blockwise bootstrap
+#' \code{$bootstrap()} computes bootstrap distribution of parameters using semiparametric bootstrap
 #' \code{$summary()} displays a summary of the object
 #' \code{$plot_paths()} plots the paths of the parameters over the estimation iterations
 #'
@@ -96,8 +96,12 @@ PrivReg <- R6Class(
       estimate  = list(start = NULL, end = NULL),
       bootstrap = list(start = NULL, end = NULL)
     ),
+    callback      = NULL,
     initialize    = function(formula, data, family = "gaussian", name = "alice",
                              verbose = FALSE, crypt_key = "testkey") {
+      # init callback
+      self$callback <- function() invisible(NULL)
+
       # public slots
       self$name      <- name
       self$verbose   <- verbose
@@ -134,7 +138,11 @@ PrivReg <- R6Class(
                  ncol = private$P)
         )
     },
-    listen        = function(port = 8080) {
+    listen        = function(port = 8080, callback) {
+      if (!missing(callback)) {
+        if (!is.function(callback)) stop("Callback should be a function!")
+        self$callback <- callback
+      }
       if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
       private$srv <- httpuv::startServer(
         host = "0.0.0.0",
@@ -151,7 +159,11 @@ PrivReg <- R6Class(
         )
       )
     },
-    connect       = function(url, port = 8080) {
+    connect       = function(url, port = 8080, callback) {
+      if (!missing(callback)) {
+        if (!is.function(callback)) stop("Callback should be a function!")
+        self$callback <- callback
+      }
       if (self$verbose) cat(paste(self$name, "| opening websocket connection\n"))
 
       full_url <- paste0("ws://", url, ":", port)
@@ -165,7 +177,11 @@ PrivReg <- R6Class(
       private$setup_ws_client()
       private$ws$connect()
     },
-    estimate      = function() {
+    estimate      = function(callback) {
+      if (!missing(callback)) {
+        if (!is.function(callback)) stop("Callback should be a function!")
+        self$callback <- callback
+      }
       if (!self$connected()) stop("Connect to another institution first.")
       if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
       self$timings$estimate$start <- Sys.time()
@@ -174,7 +190,11 @@ PrivReg <- R6Class(
       private$compute_pred()
       private$send_pred(type = "estimate")
     },
-    bootstrap     = function(R = 1000) {
+    bootstrap     = function(R = 1000, callback) {
+      if (!missing(callback)) {
+        if (!is.function(callback)) stop("Callback should be a function!")
+        self$callback <- callback
+      }
       if (!self$connected())
         stop("PrivReg disconnected. Please reconnect first.")
       if (!self$converged())
@@ -299,6 +319,14 @@ PrivReg <- R6Class(
     boot_pred_out   = NULL, # boot pred mat outgoing
     boot_converged  = NULL, # converg per replication
 
+    # callback
+    run_callback    = function() {
+      # reset the callback first and then run it
+      cb <- self$callback
+      self$callback <- function() invisible(NULL)
+      do.call(cb, args = list())
+    },
+
     # estimation
     run_estimate    = function() {
       if (is.null(self$timings$estimate$start))
@@ -312,12 +340,14 @@ PrivReg <- R6Class(
         message("PrivReg converged")
         self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
+        private$run_callback()
       } else if (self$control$iter < self$control$max_iter) {
         private$send_pred(type = "estimate")
       } else {
         message("Maximum iterations reached")
         self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
+        private$run_callback()
       }
     },
     final_estimate  = function() {
@@ -328,10 +358,12 @@ PrivReg <- R6Class(
       self$timings$estimate$end <- Sys.time()
       if (self$control$iter == self$control$max_iter) {
         message("Maximum iterations reached")
+        private$run_callback()
       } else {
         message("Partner converged")
         private$fit_model()
         self$control$iter <- self$control$iter + 1L
+        private$run_callback()
       }
     },
     fit_model       = function() {
@@ -399,12 +431,14 @@ PrivReg <- R6Class(
         message("All boot samples converged")
         self$timings$bootstrap$end <- Sys.time()
         private$send_boot_pred(type = "final_boot")
+        private$run_callback()
       } else if (self$control$boot_iter < self$control$max_iter) {
         private$send_boot_pred(type = "bootstrap")
       } else {
         message("Maximum bootstrap iteration reached")
         self$timings$bootstrap$end <- Sys.time()
         private$send_boot_pred(type = "final_boot")
+        private$run_callback()
       }
     },
     final_bootstrap = function() {
@@ -413,9 +447,11 @@ PrivReg <- R6Class(
       self$control$boot_iter <- self$control$boot_iter + 1L
       if (self$control$boot_iter == self$control$max_iter) {
         message("Maximum bootstrap iteration reached")
+        private$run_callback()
       } else {
         message("Partner converged. Here: ", sum(private$boot_converged),
                 "/", private$R)
+        private$run_callback()
       }
     },
     fit_boot_beta   = function() {
@@ -491,6 +527,8 @@ PrivReg <- R6Class(
       private$ws$onClose(function() {
         cat(self$name, "| Connection closed.\n")
       })
+
+      private$run_callback()
     },
     setup_ws_client = function() {
       # websocket has different api than httuv websocket :(
@@ -498,6 +536,7 @@ PrivReg <- R6Class(
 
       private$ws$onOpen(function(event) {
         cat(self$name, "| Connection opened.\n")
+        private$run_callback()
       })
 
       private$ws$onMessage(function(event) {

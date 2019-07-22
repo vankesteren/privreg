@@ -1,4 +1,4 @@
-context("Test PrivReg")
+context("Test PrivReg manually")
 skip("Automated testing does not work yet.")
 
 # automated testing is not really working :(

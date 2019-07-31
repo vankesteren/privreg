@@ -84,18 +84,17 @@ PrivReg <- R6Class(
     formula       = NULL,
     control       = list(
       iter      = 0L,
-      boot_iter = 0L,
+      prof_iter = 0L,
       max_iter  = 1e3L,
       tol       = 1e-8,
-      boot_tol  = 1e-5,
-      prof_tol  = 1e-8
+      prof_tol  = 1e-7
     ),
     verbose       = NULL,
     name          = NULL,
     crypt_key     = NULL,
     timings       = list(
       estimate  = list(start = NULL, end = NULL),
-      bootstrap = list(start = NULL, end = NULL)
+      profile   = list(start = NULL, end = NULL)
     ),
     callback      = NULL,
     initialize    = function(formula, data, family = "gaussian", name = "alice",
@@ -205,12 +204,13 @@ PrivReg <- R6Class(
       private$setup_bootstrap()
       private$send_message("start_bootstrap", boot_idx_mat = private$boot_idx_mat)
     },
-    profile           = function(callback) {
+    profile       = function(callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
       if (self$verbose) cat(paste(self$name, "| Profiling...\n"))
+      self$timings$profile$start <- Sys.time()
       private$get_marginal_ses()
       private$create_prof_probe()
       private$init_prof_pred_in()
@@ -287,19 +287,26 @@ PrivReg <- R6Class(
         colnames(tab) <- c("Estimate", "Std. Error", "t value", "Pr(>|t|)",
                            "2.5%", "97.5%")
       } else {
-        tab <- cbind(self$beta, matrix(unlist(private$prof_ci),
-                                       nrow = private$P, byrow = TRUE))
+        # get the 95% ci values
+        cis <- matrix(unlist(private$prof_ci), nrow = private$P, byrow = TRUE)
+        ses <- apply(cis, 1, function(ci) {
+          # compute the standard errors from the cis
+          diff(ci)/2/qt(0.975, private$N)
+        })
+        tt <- self$beta / ses
+        pp <- pt(-abs(tt), private$N - private$P) * 2
+
+        tab <- cbind(self$beta, ses, tt, pp, cis)
         rownames(tab) <- colnames(private$X)
-        colnames(tab) <- c("Estimate", "2.5%", "97.5%")
+        colnames(tab) <- c("Estimate", "Std. Error", "t value", "Pr(>|t|)",
+                           "2.5%", "97.5%")
       }
       cat(sep = "", "\n",
         "   Privacy-preserving GLM\n",
         "   ----------------------\n\n",
         "   family:      ", self$family, "\n",
         "   formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
-        "   iterations:  ", self$control$iter, "\n",
-        "   bootstrap R: ", sum(private$boot_converged), "/",
-                            length(private$boot_converged),  "\n\n",
+        "   iterations:  ", self$control$iter, "\n\n",
         "   Parameter estimates\n",
         "   -------------------\n\n"
       )
@@ -312,15 +319,14 @@ PrivReg <- R6Class(
         cat("Estimation took", format(est_time), "\n")
         units(est_time) <- "secs"
 
-        if (!is.null(self$timings$bootstrap$end)) {
-          boot_time <- self$timings$bootstrap$end - self$timings$bootstrap$start
-          cat("Bootstrapping took", format(boot_time), "\n")
-          units(boot_time) <- "secs"
+        if (!is.null(self$timings$profile$end)) {
+          prof_time <- self$timings$profile$end - self$timings$profile$start
+          cat("Profiling took", format(prof_time), "\n")
+          units(prof_time) <- "secs"
         }
         invisible(data.frame(
           Estimation = est_time,
-          Bootstrap  = ifelse(is.null(self$timings$bootstrap$end), NA,
-                              boot_time)
+          Profile    = ifelse(is.null(self$timings$profile$end), NA, prof_time)
         ))
       } else {
         cat("No timing information.")
@@ -335,25 +341,19 @@ PrivReg <- R6Class(
     P               = NULL, # number of preds
     R               = NULL, # bootstrap replicates
 
-    betas           = NULL, # parameters
-    pred_incoming   = NULL, # the incoming predictions
-    pred_outgoing   = NULL, # the outgoing predictions
-
-    boot_beta       = NULL, # replicated parameters
-    boot_idx_mat    = NULL, # bootstrap indices
-    boot_pred_in    = NULL, # boot pred mat incoming
-    boot_pred_out   = NULL, # boot pred mat outgoing
-    boot_converged  = NULL, # converg per replication
+    betas           = NULL, # max_iter*P vector of parameters
+    pred_incoming   = NULL, # N vector of the incoming predictions
+    pred_outgoing   = NULL, # N vector of the outgoing predictions
 
     marginal_ses    = NULL, # P vector of marginal standard errors
     prof_probes     = NULL, # P*2 matrix of profile likelihood probe points
     prof_corrects   = NULL, # N*P*2 array of correction factors
     prof_betas      = NULL, # P*P*2 array of current betas
-    prof_pred_out   = NULL, # N*P*2 array of outgoing predictions
-    prof_pred_in    = NULL, # N*P*2 array of incoming predictions
+    prof_pred_out   = NULL, # N*P*2 array of outgoing profile predictions
+    prof_pred_in    = NULL, # N*P*2 array of incoming profile predictions
     prof_converged  = NULL, # P*2 matrix of converg per profile probe
     prof_lls        = NULL, # P*2 matrix profile lls belonging to probes
-    prof_ll_coefs   = NULL, # profile ll quadratic coefs per parameter
+    prof_ll_coefs   = NULL, # list of profile ll quadratic coefs per parameter
     prof_ci         = NULL, # ci based on profile ll
 
     # callback
@@ -521,14 +521,20 @@ PrivReg <- R6Class(
       )
     },
     receive_prof_pred = function() {
+      self$control$prof_iter <- self$control$prof_iter + 1L
+      if (self$verbose)
+        cat(self$name, "| iteration:", self$control$prof_iter,"\n")
       private$prof_pred_in <- private$msg_incoming$data
       private$get_prof_betas()
       private$compute_prof_lls()
-      if (!all(private$prof_converged)) {
+      if (self$control$max_iter == self$control$prof_iter) {
+        message("Maximum profile iteration reached.")
+      } else if (all(private$prof_converged)) {
+        message("Profiling converged.")
+        private$finish_profile()
+      } else {
         private$create_prof_preds()
         private$send_prof_preds()
-      } else {
-        private$finish_profile()
       }
     },
     compute_prof_lls  = function() {
@@ -546,6 +552,7 @@ PrivReg <- R6Class(
     finish_profile    = function() {
       private$compute_prof_coef()
       private$create_ci()
+      self$timings$profile$end <- Sys.time()
       private$run_callback()
     },
     compute_prof_coef = function() {
@@ -557,150 +564,24 @@ PrivReg <- R6Class(
         private$prof_ll_coefs[[p]] <- unname(coef(stats::lm(ll ~ bb + I(bb^2))))
       }
     },
-    prof_llk          = function(b, p) {
-      private$prof_ll_coefs[[p]][1] + b * private$prof_ll_coefs[[p]][2] +
-        b^2 * private$prof_ll_coefs[[p]][3]
-    },
     create_ci         = function() {
       ml_llk <- self$loglik()
       private$prof_ci <- lapply(1:private$P, function(p) {
-        ci_fun <- function(b) {
-          2*(private$prof_llk(b, p) - ml_llk) + qchisq(0.95, 1)
-        }
+        # find the roots using the quadratic approximation of the pl function
+        # ci fun = 2(pl(b) - ll(b_hat)) + qchisq(0.95, 1)
+        A <- 2*private$prof_ll_coefs[[p]][3]
+        B <- 2*private$prof_ll_coefs[[p]][2]
+        C <- 2*(private$prof_ll_coefs[[p]][1] - ml_llk) + qchisq(0.95, 1)
 
-        upper <- uniroot(ci_fun, lower = self$beta[p],
-                         upper = self$beta[p] + private$marginal_ses[p],
-                         extendInt = "downX")$root
-        lower <- uniroot(ci_fun,
-                         lower = self$beta[p] - private$marginal_ses[p],
-                         upper = self$beta[p],
-                         extendInt = "upX")$root
-        bb <- seq(lower - .1, upper + .1, length.out = 100)
-        plot(bb, sapply(bb, ci_fun), type = "l")
-        abline(h = 0)
-        abline(v = c(lower, upper))
+        # never in my life did I think I'd use this formula again...
+        root_1 <- (-B - sqrt(B^2 - 4*A*C)) / (2*A)
+        root_2 <- (-B + sqrt(B^2 - 4*A*C)) / (2*A)
+
+        lower <- min(c(root_1, root_2))
+        upper <- max(c(root_1, root_2))
+
         c(lower, upper)
       })
-    },
-
-    # bootstrapping
-    setup_bootstrap = function() {
-      partner <- !is.null(private$msg_incoming[["boot_idx_mat"]])
-      if (!partner) {
-        # create a bootstrap matrix
-        private$boot_idx_mat <- private$create_boot_idx()
-      } else {
-        # use the partner boot matrix and set R
-        private$boot_idx_mat <- private$msg_incoming[["boot_idx_mat"]]
-        private$R            <- nrow(private$boot_idx_mat)
-      }
-
-      # make space for boot betas
-      private$boot_beta      <- matrix(self$beta, nrow = private$R,
-                                       ncol = private$P, byrow = TRUE)
-      private$boot_pred_in   <- matrix(0, nrow = private$R, ncol = private$N)
-      private$boot_pred_out  <- matrix(0, nrow = private$R, ncol = private$N)
-      private$boot_converged <- rep(FALSE, private$R)
-
-      if (partner) {
-        # first iteration of bootstrap
-        self$timings$bootstrap$start <- Sys.time()
-        private$boot_pred_in <- matrix(private$y, private$R, private$N,
-                                       byrow = TRUE)
-        private$fit_boot_beta()
-        private$make_boot_pred()
-        self$control$boot_iter <- self$control$boot_iter + 1L
-        private$send_boot_pred(type = "bootstrap")
-      }
-    },
-    create_boot_idx = function() {
-      t(sapply(1:private$R, function(r) sample(private$N, replace = TRUE)))
-    },
-    run_bootstrap   = function() {
-      conv <- private$msg_incoming$conv
-      private$boot_pred_in[conv,] <- private$msg_incoming$data
-      private$fit_boot_beta()
-      private$make_boot_pred()
-      self$control$boot_iter <- self$control$boot_iter + 1L
-      if (self$verbose) cat(self$name, "| iteration:", self$control$boot_iter, "\n")
-      if (self$verbose) cat(self$name, "| converged:", sum(private$boot_converged), "\n")
-      if (all(private$boot_converged)) {
-        message("All boot samples converged")
-        self$timings$bootstrap$end <- Sys.time()
-        private$send_boot_pred(type = "final_boot")
-        private$run_callback()
-      } else if (self$control$boot_iter < self$control$max_iter) {
-        private$send_boot_pred(type = "bootstrap")
-      } else {
-        message("Maximum bootstrap iteration reached")
-        self$timings$bootstrap$end <- Sys.time()
-        private$send_boot_pred(type = "final_boot")
-        private$run_callback()
-      }
-    },
-    final_bootstrap = function() {
-      self$timings$bootstrap$end <- Sys.time()
-      private$fit_boot_beta()
-      self$control$boot_iter <- self$control$boot_iter + 1L
-      if (self$control$boot_iter == self$control$max_iter) {
-        message("Maximum bootstrap iteration reached")
-        private$run_callback()
-      } else {
-        message("Partner converged. Here: ", sum(private$boot_converged),
-                "/", private$R)
-        private$run_callback()
-      }
-    },
-    fit_boot_beta   = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing bootstrap beta.\n"))
-
-      pred <- private$pred_outgoing + private$pred_incoming
-
-      for (r in 1:private$R) {
-        if (private$boot_converged[r]) next
-
-        idx <- private$boot_idx_mat[r, ]
-
-        # estimate
-        boot_beta_r <- switch(self$family,
-          gaussian = fit_gaussian(
-            y          = private$y[idx],
-            X          = private$X[idx,],
-            pred_other = private$boot_pred_in[r,]
-          ),
-          binomial = boot_fit_binomial(
-            y               = private$y,
-            X               = private$X,
-            pred            = pred,
-            idx             = private$boot_idx_mat[r, ],
-            boot_pred_other = private$boot_pred_in[r, ],
-            boot_pred_self  = private$boot_pred_out[r,]
-          )
-        )
-
-        # convergence check
-        diffs <- abs(private$boot_beta[r,] - boot_beta_r)
-        if (all(diffs < self$control$boot_tol)) {
-          private$boot_converged[r] <- TRUE
-        }
-
-        # assign
-        private$boot_beta[r,] <- boot_beta_r
-      }
-    },
-    make_boot_pred  = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing bootstrap preds.\n"))
-      # each row is one length-n prediction
-      conv <- which(!private$boot_converged)
-      private$boot_pred_out[conv, ] <- tcrossprod(private$boot_beta[conv, ], private$X)
-    },
-    send_boot_pred  = function(type) {
-      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
-      # only send the nonconverged ones!
-      conv <- which(!private$boot_converged)
-      private$send_message(type = type,
-                           data = private$boot_pred_out[conv,],
-                           conv = conv)
     },
 
     # networking

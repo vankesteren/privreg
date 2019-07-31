@@ -11,7 +11,7 @@ set.seed(45)
 S <- rWishart(1, 10, diag(10))[,,1] / 10
 X <- cbind(MASS::mvrnorm(1000, rep(0, 10), S), rbinom(100, 1, 0.1))
 b <- runif(11, -1, 1)
-y <- X %*% b + rnorm(1000, sd = sd(X %*% b))
+y <- X %*% b + rnorm(100, sd = sd(X %*% b))
 
 alice_data <- data.frame(y, X[, 1:5])
 bob_data   <- data.frame(y, X[, 6:11])
@@ -40,16 +40,21 @@ alice$verbose <- FALSE
 bob$verbose <- TRUE
 
 # do the thing
-alice$estimate(function() alice$profile(function() alice$summary()))
+alice$estimate(function()
+  alice$profile(function()
+    alice$summary()
+  )
+)
 
 alice$summary()
-confint(lm(y~X+0))
+confint(glm(y~X+0))
 
-alice$bootstrap(R = 1000)
 # compare results to lm()
 summary(lm(y ~ X + 0))
 alice$summary()
 bob$summary()
+
+
 
 
 

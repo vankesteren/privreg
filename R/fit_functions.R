@@ -13,12 +13,6 @@ ll_gaussian <- function(b, y, X, pred_other) {
   -N / 2 * log(2 * pi) - N * log(sqrt(sig2)) - 1 / (2 * sig2) * ssr
 }
 
-boot_fit_gaussian <- function(y, X, pred, idx, boot_pred_other) {
-  y_res  <- y - boot_pred_other
-  b_hat  <- stats::.lm.fit(X[idx,], y_res)[["coefficients"]]
-  return(c(b_hat))
-}
-
 fit_binomial <- function(y, X, pred_other, pred_self) {
   # create working response for IRLS update
   pred  <- pred_other + pred_self
@@ -34,23 +28,3 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
   return(as.vector(b_hat))
 }
 
-boot_fit_binomial <- function(y, X, pred, idx, boot_pred_other, boot_pred_self) {
-  # create working response for IRLS update
-  prob  <- 1 / (1 + exp(-pred))
-  wght  <- prob * (1 - prob)
-  eps   <- .Machine$double.eps * 10
-  if (any(wght < eps) || any(wght > 1 - eps))
-    wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
-
-  # semiparametric bootstrap on the working response level
-  work_boot  <- pred + (y - prob)[idx] / wght
-  y_res <- work_boot - boot_pred_other
-
-  # create weight matrix
-  W <- Matrix::sparseMatrix(i = 1:length(wght), j = 1:length(wght), x = c(wght))
-
-  # compute b_hat
-  b_hat <- Matrix::solve(Matrix::crossprod(X, W %*% X), Matrix::crossprod(X, W %*% y_res))
-
-  return(as.vector(b_hat))
-}

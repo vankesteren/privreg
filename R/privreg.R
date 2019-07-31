@@ -15,10 +15,12 @@
 #' alice$disconnect()
 #'
 #' alice$estimate()
-#' alice$bootstrap()
+#' alice$profile()
 #'
+#' alice$loglik()
 #' alice$summary()
 #' alice$plot_paths()
+#' alice$elapsed()
 #' }
 #'
 #' @section Arguments:
@@ -38,9 +40,11 @@
 #' \code{$connect()} connects to a listening partner institution
 #' \code{$disconnect()} disconnects from the partner institution
 #' \code{$estimate()} computes parameter estimates through block coordinate descent
-#' \code{$bootstrap()} computes bootstrap distribution of parameters using semiparametric bootstrap
+#' \code{$profile()} computes confidence intervals and standard errors using profile likelihood
+#' \code{$loglik()} returns full model log-likelihood
 #' \code{$summary()} displays a summary of the object
 #' \code{$plot_paths()} plots the paths of the parameters over the estimation iterations
+#' \code{$elapsed()} print information about the elapsed time in estimation and profiling
 #'
 #' @importFrom R6 R6Class
 #'
@@ -62,8 +66,8 @@
 #' # estimate
 #' alice$estimate()
 #' # ...
-#' # bootstrap
-#' alice$bootstrap()
+#' # profile
+#' alice$profile()
 #' # ...
 #' # compare results to lm()
 #' summary(lm(y ~ X + 0))
@@ -93,8 +97,8 @@ PrivReg <- R6Class(
     name          = NULL,
     crypt_key     = NULL,
     timings       = list(
-      estimate  = list(start = NULL, end = NULL),
-      profile   = list(start = NULL, end = NULL)
+      estimate = list(start = NULL, end = NULL),
+      profile  = list(start = NULL, end = NULL)
     ),
     callback      = NULL,
     initialize    = function(formula, data, family = "gaussian", name = "alice",
@@ -119,14 +123,14 @@ PrivReg <- R6Class(
       private$pred_incoming <- rep(0, private$N)
       private$pred_outgoing <- rep(0, private$N)
     },
-    set_control   = function(iter = 0L, boot_iter = 0L, max_iter = 1e3L,
-                             tol = 1e-8, boot_tol = 1e-5) {
+    set_control   = function(iter = 0L, prof_iter = 0L, max_iter = 1e3L,
+                             tol = 1e-8, prof_tol = 1e-7) {
       self$control <- list(
         iter      = iter,
-        boot_iter = boot_iter,
+        prof_iter = prof_iter,
         max_iter  = max_iter,
         tol       = tol,
-        boot_tol  = boot_tol
+        prof_tol  = prof_tol
       )
 
       if (nrow(private$betas) > self$control$max_iter)
@@ -189,20 +193,6 @@ PrivReg <- R6Class(
       self$control$iter <- self$control$iter + 1L
       private$compute_pred()
       private$send_pred(type = "estimate")
-    },
-    bootstrap     = function(R = 1000, callback) {
-      if (!missing(callback)) {
-        if (!is.function(callback)) stop("Callback should be a function!")
-        self$callback <- callback
-      }
-      if (!self$connected())
-        stop("PrivReg disconnected. Please reconnect first.")
-      if (!self$converged())
-        stop("No converged parameter estimates found. Please estimate() first.")
-      self$timings$bootstrap$start <- Sys.time()
-      private$R <- R
-      private$setup_bootstrap()
-      private$send_message("start_bootstrap", boot_idx_mat = private$boot_idx_mat)
     },
     profile       = function(callback) {
       if (!missing(callback)) {
@@ -275,17 +265,6 @@ PrivReg <- R6Class(
         tab <- cbind(self$beta)
         rownames(tab) <- colnames(private$X)
         colnames(tab) <- "est"
-      } else if (!is.null(private$boot_beta)) {
-        se <- apply(private$boot_beta[private$boot_converged,], 2, sd,
-                    na.rm = TRUE)
-        qq <- apply(private$boot_beta[private$boot_converged,], 2, quantile,
-                    probs = c(0.025, 0.975), na.rm = TRUE)
-        tt <- self$beta / se
-        pp <- pt(-abs(tt), nrow(private$X) - ncol(private$X)) * 2
-        tab <- cbind(self$beta, se, tt, pp, t(qq))
-        rownames(tab) <- colnames(private$X)
-        colnames(tab) <- c("Estimate", "Std. Error", "t value", "Pr(>|t|)",
-                           "2.5%", "97.5%")
       } else {
         # get the 95% ci values
         cis <- matrix(unlist(private$prof_ci), nrow = private$P, byrow = TRUE)
@@ -339,7 +318,6 @@ PrivReg <- R6Class(
     y               = NULL, # outcome var
     N               = NULL, # sample size
     P               = NULL, # number of preds
-    R               = NULL, # bootstrap replicates
 
     betas           = NULL, # max_iter*P vector of parameters
     pred_incoming   = NULL, # N vector of the incoming predictions
@@ -693,11 +671,8 @@ PrivReg <- R6Class(
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 
       switch(private$msg_incoming$type,
-        "start_bootstrap"  = private$setup_bootstrap(),
-        "bootstrap"        = private$run_bootstrap(),
         "estimate"         = private$run_estimate(),
         "final_iter"       = private$final_estimate(),
-        "final_boot"       = private$final_bootstrap(),
         "prof_pred"        = private$return_prof_preds(),
         "return_prof_pred" = private$receive_prof_pred()
       )

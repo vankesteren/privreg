@@ -1,15 +1,21 @@
 fit_gaussian <- function(y, X, pred_other) {
   # create residuals to compute conditional params
   y_res <- y - pred_other
-  b_hat <- solve(crossprod(X), crossprod(X, y_res))
+  b_hat <- stats::.lm.fit(X, y_res)[["coefficients"]]
   return(c(b_hat))
 }
 
+ll_gaussian <- function(b, y, X, pred_other) {
+  N      <- length(y)
+  res    <- y - pred_other - X %*% b
+  ssr    <- c(crossprod(res))
+  sig2   <- ssr / N
+  -N / 2 * log(2 * pi) - N * log(sqrt(sig2)) - 1 / (2 * sig2) * ssr
+}
+
 boot_fit_gaussian <- function(y, X, pred, idx, boot_pred_other) {
-  # semiparametric bootstrap: boot residuals
-  y_boot <- (y - pred)[idx] + pred
-  y_res  <- y_boot - boot_pred_other
-  b_hat  <- solve(crossprod(X), crossprod(X, y_res))
+  y_res  <- y - boot_pred_other
+  b_hat  <- stats::.lm.fit(X[idx,], y_res)[["coefficients"]]
   return(c(b_hat))
 }
 

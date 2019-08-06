@@ -9,12 +9,12 @@ httpuv::stopAllServers()
 # create test data
 set.seed(45)
 S <- rWishart(1, 10, diag(10))[,,1] / 10
-X <- MASS::mvrnorm(100, rep(0, 10), S)
-b <- runif(10, -1, 1)
-y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
+X <- cbind(MASS::mvrnorm(1000, rep(0, 10), S), rbinom(100, 1, 0.1))
+b <- runif(11, -1, 1)
+y <- X %*% b + rnorm(100, sd = sd(X %*% b))
 
 alice_data <- data.frame(y, X[, 1:5])
-bob_data   <- data.frame(y, X[, 6:10])
+bob_data   <- data.frame(y, X[, 6:11])
 
 alice <- PrivReg$new(
   formula = y ~ . + 0,
@@ -40,13 +40,21 @@ alice$verbose <- FALSE
 bob$verbose <- TRUE
 
 # do the thing
-alice$estimate()
-alice$bootstrap(R = 1000)
+alice$estimate(function()
+  alice$profile(function()
+    alice$summary()
+  )
+)
+
+alice$summary()
+confint(glm(y~X+0))
 
 # compare results to lm()
 summary(lm(y ~ X + 0))
 alice$summary()
 bob$summary()
+
+
 
 
 

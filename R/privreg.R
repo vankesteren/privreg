@@ -424,7 +424,7 @@ PrivReg <- R6Class(
           wght <- prob * (1 - prob)
           W    <- Matrix::sparseMatrix(i = 1:length(wght), j = 1:length(wght),
                                        x = c(wght))
-          sqrt(Matrix::diag(Matrix::solve(Matrix::crossprod(X, W %*% X))))
+          sqrt(Matrix::diag(Matrix::solve(Matrix::crossprod(private$X, W %*% private$X))))
         }
       )
     },

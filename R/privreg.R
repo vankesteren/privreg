@@ -91,7 +91,8 @@ PrivReg <- R6Class(
       prof_iter = 0L,
       max_iter  = 1e3L,
       tol       = 1e-8,
-      prof_tol  = 1e-7
+      prof_tol  = 1e-7,
+      prof_Q    = 2
     ),
     verbose       = NULL,
     name          = NULL,
@@ -204,6 +205,7 @@ PrivReg <- R6Class(
       private$get_marginal_ses()
       private$create_prof_probe()
       private$init_prof_pred_in()
+      private$init_prof_pred_out()
       private$init_prof_betas()
       private$init_prof_conv()
       private$init_prof_lls()
@@ -324,13 +326,15 @@ PrivReg <- R6Class(
     pred_outgoing   = NULL, # N vector of the outgoing predictions
 
     marginal_ses    = NULL, # P vector of marginal standard errors
-    prof_probes     = NULL, # P*2 matrix of profile likelihood probe points
-    prof_corrects   = NULL, # N*P*2 array of correction factors
-    prof_betas      = NULL, # P*P*2 array of current betas
-    prof_pred_out   = NULL, # N*P*2 array of outgoing profile predictions
-    prof_pred_in    = NULL, # N*P*2 array of incoming profile predictions
-    prof_converged  = NULL, # P*2 matrix of converg per profile probe
-    prof_lls        = NULL, # P*2 matrix profile lls belonging to probes
+    Q               = NULL, # Number of probes to test for prof lik
+    prof_probes     = NULL, # P*Q matrix of profile likelihood probe points
+    prof_corrects   = NULL, # N*P*Q array of correction factors
+    prof_betas      = NULL, # P*P*Q array of current betas
+    prof_pred_out   = NULL, # N*P*Q array of outgoing profile predictions
+    prof_pred_in    = NULL, # N*P*Q array of incoming profile predictions
+    prof_pred_ret   = NULL, # N*P*Q array of to return profile predictions
+    prof_converged  = NULL, # P*Q matrix of converg per profile probe
+    prof_lls        = NULL, # P*Q matrix profile lls belonging to probes
     prof_ll_coefs   = NULL, # list of profile ll quadratic coefs per parameter
     prof_ci         = NULL, # ci based on profile ll
 
@@ -400,96 +404,152 @@ PrivReg <- R6Class(
     },
 
     # profiling
-    get_loglik        = function(b, pred_other) {
+    get_loglik         = function(b, pred_other) {
       switch(self$family,
-             gaussian = ll_gaussian(b, private$y, private$X, pred_other),
-             binomial = stop("Binomial log-likelihood not yet implemented!")
+        gaussian = ll_gaussian(b, private$y, private$X, pred_other),
+        binomial = ll_binomial(b, private$y, private$X, pred_other)
       )
     },
-    get_marginal_ses  = function() {
+    get_marginal_ses   = function() {
       private$marginal_ses <- switch(self$family,
         gaussian = {
-          pred   <- private$pred_incoming + private$pred_outgoing
-          ssr    <- c(crossprod(private$y - pred))
-          sig2   <- ssr / private$N
+          pred <- private$pred_incoming + private$pred_outgoing
+          ssr  <- c(crossprod(private$y - pred))
+          sig2 <- ssr / private$N
           sqrt(diag(sig2*solve(crossprod(private$X))))
         },
-        binomial = stop("Binomial profiling nog possible.")
+        binomial = {
+          pred <- private$pred_incoming + private$pred_outgoing
+          prob <- 1 / (1 + exp(-pred))
+          wght <- prob * (1 - prob)
+          W    <- Matrix::sparseMatrix(i = 1:length(wght), j = 1:length(wght),
+                                       x = c(wght))
+          sqrt(Matrix::diag(Matrix::solve(Matrix::crossprod(X, W %*% X))))
+        }
       )
     },
-    create_prof_probe = function() {
-      private$prof_probes <- matrix(0, nrow = private$P, ncol = 2)
-      points <- c(1, -1.5)
+    create_prof_probe  = function() {
+      points <- switch(self$family,
+        gaussian = seq(-1.5, 1, length.out = self$control$prof_Q),
+        binomial = seq(-.4, .5, length.out = self$control$prof_Q)
+      )
+      private$Q    <- length(points)
+      private$prof_probes <- matrix(0, private$P, private$Q)
       for (p in 1:private$P) {
         private$prof_probes[p, ] <-
           self$beta[p] + points * private$marginal_ses[p]
       }
-      private$prof_corrects <- array(0, c(private$N, private$P, 2))
+      private$prof_corrects <- array(0, c(private$N, private$P, private$Q))
       for (p in 1:private$P) {
-        for (q in 1:2) {
+        for (q in 1:private$Q) {
           private$prof_corrects[ , p, q] <-
             private$X[,p] * private$prof_probes[p, q]
         }
       }
     },
-    init_prof_pred_in = function() {
+    init_prof_pred_in  = function() {
       private$prof_pred_in <-
-        array(private$pred_incoming, c(private$N, private$P, 2))
+        array(private$pred_incoming, c(private$N, private$P, private$Q))
     },
-    init_prof_betas   = function() {
-      private$prof_betas <- array(self$beta, c(private$P, private$P, 2))
+    init_prof_pred_out = function() {
+      private$prof_pred_out <-
+        array(private$pred_outgoing, c(private$N, private$P, private$Q))
+    },
+    init_prof_betas    = function() {
+      private$prof_betas <- array(self$beta, c(private$P, private$P, private$Q))
       for (p in 1:private$P) {
-        for (q in 1:2) {
+        for (q in 1:private$Q) {
           private$prof_betas[p, p, q] <- private$prof_probes[p, q]
         }
       }
     },
-    init_prof_conv    = function() {
-      private$prof_converged <- matrix(FALSE, private$P, 2)
+    init_prof_conv     = function() {
+      private$prof_converged <- matrix(FALSE, private$P, private$Q)
     },
-    init_prof_lls     = function() {
-      private$prof_lls <- matrix(0, private$P, 2)
+    init_prof_lls      = function() {
+      private$prof_lls <- matrix(0, private$P, private$Q)
     },
-    get_prof_betas    = function() {
+    get_prof_betas     = function() {
+      if (private$P == 1) return()
       for (p in 1:private$P) {
-        for (q in 1:2) {
+        for (q in 1:private$Q) {
           y_pred <- private$prof_corrects[,p,q] + private$prof_pred_in[,p,q]
           private$prof_betas[-p, p, q] <- switch(self$family,
-            gaussian = fit_gaussian(y = private$y, X = private$X[,-p],
-                                    pred_other = y_pred),
-            binomial = stop("Binomial not yet implemented.")
+            gaussian = fit_gaussian(
+              y = private$y, X = private$X[,-p],pred_other = y_pred
+            ),
+            binomial = fit_binomial(
+              y = private$y,
+              X = private$X[,-p],
+              pred_self = private$prof_pred_out[,p,q] -
+                private$prof_corrects[,p,q],
+              pred_other = y_pred
+            )
           )
         }
       }
     },
-    create_prof_preds = function() {
+    create_prof_preds  = function() {
       if (self$verbose) cat(paste(self$name, "| Making profile predictions.\n"))
-      private$prof_pred_out <- array(0, c(private$N, private$P, 2))
       for (p in 1:private$P) {
-        for (q in 1:2) {
-          beta_prof <- private$prof_betas[,p,q]
-          private$prof_pred_out[,p,q] <- private$X %*% beta_prof
+        for (q in 1:private$Q) {
+          private$prof_pred_out[,p,q] <- private$X %*% private$prof_betas[,p,q]
         }
       }
     },
-    send_prof_preds   = function() {
+    send_prof_preds    = function() {
       if (self$verbose) cat(paste(self$name, "| Sending profile predictions.\n"))
       private$send_message(type = "prof_pred", data = private$prof_pred_out)
     },
-    return_prof_preds = function() {
-      prof_preds_in  <- private$msg_incoming$data
-      pred_dims      <- dim(prof_preds_in)
-      prof_preds_out <- array(0, pred_dims)
+    return_prof_preds  = function() {
+      prof_pred_in  <- private$msg_incoming$data
+      pred_dims      <- dim(prof_pred_in)
+      if (is.null(private$prof_pred_ret))
+        private$prof_pred_ret <- array(private$pred_outgoing, pred_dims)
 
       for (p in 1:pred_dims[2]) {
-        for (q in 1:2) {
-          pred_in <- prof_preds_in[,p,q]
+        for (q in 1:pred_dims[3]) {
+          pred_in <- prof_pred_in[,p,q]
           betas <- switch(self$family,
             gaussian = fit_gaussian(private$y, private$X, pred_in),
             binomial = fit_binomial(private$y, private$X, pred_in,
-                                    private$pred_outgoing)
+                                    private$prof_pred_ret[,p,q])
           )
-          prof_preds_out[,p,q] <- private$X %*% betas
+          private$prof_pred_ret[,p,q] <- private$X %*% betas
+        }
+      }
+
+      private$send_message(
+        type = "return_prof_pred",
+        data = private$prof_pred_ret
+      )
+    },
+    receive_prof_pred  = function() {
+      self$control$prof_iter <- self$control$prof_iter + 1L
+      if (self$verbose)
+        cat(self$name, "| iteration:", self$control$prof_iter,"\n")
+      private$prof_pred_in <- private$msg_incoming$data
+      private$get_prof_betas()
+      private$compute_prof_lls()
+      if (self$control$max_iter == self$control$prof_iter) {
+        message("Maximum profile iteration reached.")
+      } else if (all(private$prof_converged)) {
+        message("Profiling converged.")
+        private$finish_profile()
+      } else {
+        private$create_prof_preds()
+        private$send_prof_preds()
+      }
+    },
+    compute_prof_lls   = function() {
+      for (p in 1:private$P) {
+        for (q in 1:private$Q) {
+          ll <- private$get_loglik(b = private$prof_betas[,p,q],
+                                   pred_other = private$prof_pred_in[,p,q])
+          if (abs(ll - private$prof_lls[p, q]) < self$control$prof_tol) {
+            private$prof_converged[p, q] <- TRUE
+          }
+          private$prof_lls[p, q] <- ll
         }
       }
 
@@ -515,25 +575,13 @@ PrivReg <- R6Class(
         private$send_prof_preds()
       }
     },
-    compute_prof_lls  = function() {
-      for (p in 1:private$P) {
-        for (q in 1:2) {
-          ll <- private$get_loglik(b = private$prof_betas[,p,q],
-                                   pred_other = private$prof_pred_in[,p,q])
-          if (abs(ll - private$prof_lls[p, q]) < self$control$prof_tol) {
-            private$prof_converged[p, q] <- TRUE
-          }
-          private$prof_lls[p, q] <- ll
-        }
-      }
-    },
-    finish_profile    = function() {
+    finish_profile     = function() {
       private$compute_prof_coef()
       private$create_ci()
       self$timings$profile$end <- Sys.time()
       private$run_callback()
     },
-    compute_prof_coef = function() {
+    compute_prof_coef  = function() {
       ll_ml <- self$loglik()
       private$prof_ll_coefs <- vector("list", private$P)
       for (p in 1:private$P) {
@@ -542,7 +590,7 @@ PrivReg <- R6Class(
         private$prof_ll_coefs[[p]] <- unname(coef(stats::lm(ll ~ bb + I(bb^2))))
       }
     },
-    create_ci         = function() {
+    create_ci          = function() {
       ml_llk <- self$loglik()
       private$prof_ci <- lapply(1:private$P, function(p) {
         # find the roots using the quadratic approximation of the pl function

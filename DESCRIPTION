@@ -1,7 +1,7 @@
 Package: privreg
 Type: Package
 Title: Privacy-preserving Regression
-Version: 0.6.1
+Version: 0.6.2
 Author: Erik-Jan van Kesteren
 Maintainer: Erik-Jan van Kesteren <e.vankesteren1@uu.nl>
 Description: Perform regression on vertically partitioned data using block

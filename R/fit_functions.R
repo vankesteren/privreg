@@ -28,3 +28,8 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
   return(as.vector(b_hat))
 }
 
+ll_binomial <- function(b, y, X, pred_other) {
+  # based on friedman (2010) equation 14
+  pred <- pred_other + X %*% b
+  sum(y * pred - log(1 + exp(pred)))
+}

@@ -552,28 +552,6 @@ PrivReg <- R6Class(
           private$prof_lls[p, q] <- ll
         }
       }
-
-      private$send_message(
-        type = "return_prof_pred",
-        data = prof_preds_out
-      )
-    },
-    receive_prof_pred = function() {
-      self$control$prof_iter <- self$control$prof_iter + 1L
-      if (self$verbose)
-        cat(self$name, "| iteration:", self$control$prof_iter,"\n")
-      private$prof_pred_in <- private$msg_incoming$data
-      private$get_prof_betas()
-      private$compute_prof_lls()
-      if (self$control$max_iter == self$control$prof_iter) {
-        message("Maximum profile iteration reached.")
-      } else if (all(private$prof_converged)) {
-        message("Profiling converged.")
-        private$finish_profile()
-      } else {
-        private$create_prof_preds()
-        private$send_prof_preds()
-      }
     },
     finish_profile     = function() {
       private$compute_prof_coef()

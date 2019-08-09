@@ -23,7 +23,7 @@ fit_binomial <- function(y, X, pred_other, pred_self) {
     wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
   work  <- pred + (y - prob) / wght
   y_res <- work - pred_other
-  W     <- Matrix::sparseMatrix(i = 1:length(wght), j = 1:length(wght), x = c(wght))
+  W     <- Matrix::Diagonal(x = c(wght))
   b_hat <- Matrix::solve(Matrix::crossprod(X, W %*% X), Matrix::crossprod(X, W %*% y_res))
   return(as.vector(b_hat))
 }

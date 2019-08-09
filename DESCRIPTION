@@ -14,7 +14,8 @@ Imports:
     websocket,
     R6,
     openssl,
-    Matrix
+    Matrix,
+    MASS
 Remotes: vankesteren/firatheme
 RoxygenNote: 6.1.1
 Suggests:
@@ -23,5 +24,4 @@ Suggests:
     dplyr,
     ggplot2,
     tibble,
-    tidyr,
-    MASS
+    tidyr

@@ -410,10 +410,11 @@ PrivReg <- R6Class(
       prd_incoming <- private$pred_incoming[,1:iter]
       res_outgoing <- apply(private$pred_outgoing[,1:iter], 2, function(prd) private$y - prd)
       Hhat         <- prd_incoming %*% MASS::ginv(res_outgoing)
-      eig          <- eigen(Hhat)
-      private$Pp   <- sum(zapsmall(eig$values, 3) != 0)
-      Vp           <- eigen(Hhat)$vectors[,1:private$Pp]
-      Z            <- cbind(private$X, Vp)
+      private$Pp   <- round(sum(diag(Hhat)))
+      # Qr decomposition is a faster alternative to get RXp
+      # RXp          <- eigen(Hhat)$vectors[,1:private$Pp]
+      RXp          <- qr.Q(qr(Hhat))[,1:private$Pp]
+      Z            <- cbind(private$X, RXp)
       if (self$family == "binomial") {
         prob  <- 1 / (1 + exp(-pred))
         wght  <- c(prob * (1 - prob))

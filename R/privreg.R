@@ -89,11 +89,8 @@ PrivReg <- R6Class(
     formula       = NULL,
     control       = list(
       iter      = 0L,
-      prof_iter = 0L,
       max_iter  = 1e3L,
-      tol       = 1e-8,
-      prof_tol  = 1e-7,
-      prof_Q    = 2
+      tol       = 1e-8
     ),
     verbose       = NULL,
     name          = NULL,
@@ -116,40 +113,36 @@ PrivReg <- R6Class(
       self$formula   <- formula
 
       # private slots
-      private$X             <- model.matrix(formula, data)
-      private$y             <- unname(model.response(model.frame(formula, data)))
-      private$N             <- nrow(private$X)
-      private$P             <- ncol(private$X)
-      private$betas         <- matrix(0, nrow = self$control$max_iter,
-                                      ncol = private$P)
+      private$X     <- model.matrix(formula, data)
+      private$y     <- unname(model.response(model.frame(formula, data)))
+      private$N     <- nrow(private$X)
+      private$P     <- ncol(private$X)
+      private$betas <- matrix(0, nrow = self$control$max_iter, ncol = private$P)
       private$pred_incoming <- matrix(0, private$N, self$control$max_iter)
       private$pred_outgoing <- matrix(0, private$N, self$control$max_iter)
     },
-    set_control   = function(iter = 0L, prof_iter = 0L, max_iter = 1e3L,
-                             tol = 1e-8, prof_tol = 1e-7) {
+    set_control   = function(iter = 0L, max_iter = 1e3L, tol = 1e-8) {
       self$control <- list(
         iter      = iter,
-        prof_iter = prof_iter,
         max_iter  = max_iter,
-        tol       = tol,
-        prof_tol  = prof_tol
+        tol       = tol
       )
 
-      if (nrow(private$betas) > self$control$max_iter)
-        private$betas <- private$betas[1:self$control$max_iter]
-      if (nrow(private$betas) < self$control$max_iter)
-        private$betas <- rbind(
-          private$betas,
-          matrix(0, nrow = self$control$max_iter - nrow(private$betas),
-                 ncol = private$P)
-        )
+      if (nrow(private$betas) >= self$control$max_iter) {
+        private$betas <- private$betas[1:self$control$max_iter,]
+      } else {
+        add <- self$control$max_iter - nrow(private$betas)
+        private$betas <-
+          rbind(private$betas, matrix(0, nrow = add, ncol = private$P))
+      }
     },
     listen        = function(port = 8080, callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
+      if (self$verbose)
+        cat(paste(self$name, "| starting server on port:", port, "\n"))
       private$srv <- httpuv::startServer(
         host = "0.0.0.0",
         port = port,
@@ -257,9 +250,6 @@ PrivReg <- R6Class(
         firatheme::scale_colour_fira() +
         ggplot2::labs(x = "Iteration", y = "Beta value", color = "Predictor")
     },
-    loglik        = function() {
-      private$get_loglik(self$beta, private$pred_incoming)
-    },
     summary       = function() {
       frml <- as.character(self$formula)
       if (is.null(self$SE)) {
@@ -268,8 +258,13 @@ PrivReg <- R6Class(
             "----------------------\n\n",
             "family:      ", self$family, "\n",
             "formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
-            "iterations:  ", self$control$iter, "\n")
-        return()
+            "iterations:  ", self$control$iter, "\n\n",
+            "Coefficients:\n")
+        tab <- as.matrix(self$beta)
+        rownames(tab) <- colnames(private$X)
+        colnames(tab) <- "Estimate"
+        print(tab)
+        return(tab)
       }
 
       bts <- self$beta
@@ -297,20 +292,25 @@ PrivReg <- R6Class(
       cat("\n")
       invisible(tab)
     },
+    coef          = function() {
+      coefs <- self$beta
+      names(coefs) <- colnames(private$X)
+      coefs
+    },
     elapsed       = function() {
       if (!is.null(self$timings$estimate$end)) {
         est_time <- self$timings$estimate$end - self$timings$estimate$start
         cat("Estimation took", format(est_time), "\n")
         units(est_time) <- "secs"
 
-        if (!is.null(self$timings$profile$end)) {
-          prof_time <- self$timings$profile$end - self$timings$profile$start
-          cat("Profiling took", format(prof_time), "\n")
+        if (!is.null(self$timings$se$end)) {
+          se_time <- self$timings$se$end - self$timings$se$start
+          cat("Std. Errors took", format(se_time), "\n")
           units(prof_time) <- "secs"
         }
         invisible(data.frame(
-          Estimation = est_time,
-          Profile    = ifelse(is.null(self$timings$profile$end), NA, prof_time)
+          "Estimation"  = est_time,
+          "Std. Errors" = ifelse(is.null(self$timings$se$end), NA, se_time)
         ))
       } else {
         cat("No timing information.")
@@ -403,27 +403,29 @@ PrivReg <- R6Class(
 
     # SE computation
     compute_SE      = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing standard errors...\n"))
+      if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
-      iter         <- self$control$iter
-      pred         <- private$pred_outgoing[,iter] + private$pred_incoming[,iter]
-      prd_incoming <- private$pred_incoming[,1:iter]
-      res_outgoing <- apply(private$pred_outgoing[,1:iter], 2, function(prd) private$y - prd)
+      R            <- self$control$iter
+      pred         <- private$pred_outgoing[, R] + private$pred_incoming[, R]
+      prd_incoming <- private$pred_incoming[,1:R]
+      res_outgoing <- apply(private$pred_outgoing[, 1:R], 2,
+                            function(prd) private$y - prd)
       Hhat         <- prd_incoming %*% MASS::ginv(res_outgoing)
       private$Pp   <- round(sum(diag(Hhat)))
       # Qr decomposition is a faster alternative to get RXp
-      # RXp          <- eigen(Hhat)$vectors[,1:private$Pp]
-      RXp          <- qr.Q(qr(Hhat))[,1:private$Pp]
+      # RXp <- eigen(Hhat)$vectors[,1:private$Pp]
+      RXp          <- qr.Q(qr(Hhat))[, 1:private$Pp]
       Z            <- cbind(private$X, RXp)
       if (self$family == "binomial") {
         prob  <- 1 / (1 + exp(-pred))
         wght  <- c(prob * (1 - prob))
       } else {
-        sig2  <- c(crossprod(private$y - pred)) / (private$N - private$P - private$Pp)
-        wght  <- rep(1 / sig2, private$N)
+        P     <- private$P + private$Pp
+        invs2 <- (private$N - P) / c(crossprod(private$y - pred))
+        wght  <- rep(invs2, private$N)
       }
-      VCOV         <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
-      self$SE      <- Re(sqrt(diag(VCOV)))
+      VCOV    <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
+      self$SE <- Re(sqrt(diag(VCOV)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
     },

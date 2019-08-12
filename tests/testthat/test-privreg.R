@@ -90,6 +90,6 @@ bob$connect("127.0.0.1")
 alice$estimate()
 
 # compare results to glm()
-confint(glm(y_binom ~ X + 0, family = "binomial"))
+summary(glm(y_binom ~ X + 0, family = "binomial"))
 alice$summary()
 bob$summary()

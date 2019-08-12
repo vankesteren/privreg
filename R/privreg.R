@@ -407,12 +407,6 @@ PrivReg <- R6Class(
       self$timings$se$start <- Sys.time()
       iter         <- self$control$iter
       pred         <- private$pred_outgoing[,iter] + private$pred_incoming[,iter]
-      if (self$family == "binomial") {
-        prob  <- 1 / (1 + exp(-pred))
-        wght  <- c(prob * (1 - prob))
-      } else {
-        wght  <- rep(1, private$N)
-      }
       prd_incoming <- private$pred_incoming[,1:iter]
       res_outgoing <- apply(private$pred_outgoing[,1:iter], 2, function(prd) private$y - prd)
       Hhat         <- prd_incoming %*% MASS::ginv(res_outgoing)
@@ -420,8 +414,14 @@ PrivReg <- R6Class(
       private$Pp   <- sum(zapsmall(eig$values, 3) != 0)
       Vp           <- eigen(Hhat)$vectors[,1:private$Pp]
       Z            <- cbind(private$X, Vp)
-      sig2         <- c(crossprod(y - pred)) / (private$N - private$P - private$Pp)
-      VCOV         <- sig2 * MASS::ginv(crossprod(Z * wght, Z))[1:private$P, 1:private$P]
+      if (self$family == "binomial") {
+        prob  <- 1 / (1 + exp(-pred))
+        wght  <- c(prob * (1 - prob))
+      } else {
+        sig2  <- c(crossprod(private$y - pred)) / (private$N - private$P - private$Pp)
+        wght  <- rep(1 / sig2, private$N)
+      }
+      VCOV         <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
       self$SE      <- Re(sqrt(diag(VCOV)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()

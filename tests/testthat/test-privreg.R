@@ -40,14 +40,7 @@ alice$verbose <- FALSE
 bob$verbose <- TRUE
 
 # do the thing
-alice$estimate(function()
-  alice$profile(function()
-    alice$summary()
-  )
-)
-
-alice$summary()
-confint(glm(y~X+0))
+alice$estimate()
 
 # compare results to lm()
 summary(lm(y ~ X + 0))
@@ -95,10 +88,8 @@ bob$connect("127.0.0.1")
 
 # do the thing
 alice$estimate()
-alice$profile()
-bob$profile()
 
 # compare results to glm()
-confint(glm(y_binom ~ X + 0, family = "binomial"))
+summary(glm(y_binom ~ X + 0, family = "binomial"))
 alice$summary()
 bob$summary()

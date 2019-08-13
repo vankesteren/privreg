@@ -9,48 +9,70 @@ an R6 object of class PrivReg
 \description{
 Perform privacy-preserving regression modeling across different institutions.
 This class implements regression with gaussian and binomial responses using
-block coordinate descent (Van Kesteren, Sun, and Ippel; in preparation).
+block coordinate descent.
 }
 \section{Usage}{
-
-\preformatted{alice <- PrivReg$new(formula, data, family = "gaussian",
-                     name = "alice", verbose = FALSE, crypt_key = "testkey")
+\preformatted{alice <- PrivReg$new(
+  formula,
+  data,
+  family    = "gaussian",
+  name      = "alice",
+  verbose   = FALSE,
+  crypt_key = "testkey"
+)
 
 alice$listen()
 alice$connect(127.0.0.1)
 alice$disconnect()
 
 alice$estimate()
-alice$bootstrap()
+alice$calculate_se()
 
 alice$summary()
+alice$coef()
+alice$converged()
 alice$plot_paths()
+alice$elapsed()
 }
 }
 
 \section{Arguments}{
 
-\describe{
- \item{alice}{a PrivReg object}
- \item{formula}{model formula for the regression model at this institution}
- \item{data}{data frame for the variables in the model formula}
- \item{family}{response family as in glm. Currently only gaussian and binomial are supported}
- \item{name}{name of this institution}
- \item{verbose}{whether to print debug information}
- \item{crypt_key}{pre-shared key used to encrypt communication}
+\itemize{
+\item \code{formula} model formula for the regression model at this institution
+\item \code{data} data frame for the variables in the model formula
+\item \code{family} response family as in glm. Currently only gaussian and binomial are supported
+\item \code{name} name of this institution
+\item \code{verbose} whether to print debug information
+\item \code{crypt_key} pre-shared key used to encrypt communication
 }
 }
 
 \section{Details}{
 
-\code{$new()} instantiates and returns a new PrivReg object.
-\code{$listen()} listens for incoming connections from a partner institution
-\code{$connect()} connects to a listening partner institution
-\code{$disconnect()} disconnects from the partner institution
-\code{$estimate()} computes parameter estimates through block coordinate descent
-\code{$bootstrap()} computes bootstrap distribution of parameters using semiparametric bootstrap
-\code{$summary()} displays a summary of the object
-\code{$plot_paths()} plots the paths of the parameters over the estimation iterations
+\itemize{
+\item \code{$new()} instantiates and returns a new PrivReg object.
+\item \code{$listen()} listens for incoming connections from a partner institution
+\item \code{$connect()} connects to a listening partner institution
+\item \code{$disconnect()} disconnects from the partner institution
+\item \code{$set_control()} sets control parameters. See below for more info
+\item \code{$estimate()} computes parameter estimates through block coordinate descent
+\item \code{$calculate_se()} computes standard errors using projection method
+\item \code{$converged()} test whether the algorithm has converged
+\item \code{$summary()} displays a summary of the object, invisibly returns the coef matrix
+\item \code{$coef()} returns the model coefficients
+\item \code{$plot_paths()} plots the paths of the parameters over the estimation iterations
+\item \code{$elapsed()} print information about the elapsed time
+}
+}
+
+\section{Control parameters}{
+
+\itemize{
+\item \code{max_iter} maximum number of iterations of the coordinate descent algorithm
+\item \code{tol} PrivReg is converged if all beta changes are below \code{tol}.
+\item \code{se} Whether to compute standard errors
+}
 }
 
 \examples{
@@ -60,18 +82,20 @@ set.seed(45)
 X <- matrix(rnorm(1000), 100)
 b <- runif(10, -1, 1)
 y <- X \%*\% b + rnorm(100, sd = sqrt(b \%*\% S \%*\% b))
+
 # split into alice and bob institutions
 alice_data <- data.frame(y, X[, 1:5])
 bob_data   <- data.frame(y, X[, 6:10])
+
 # create connection
 alice$listen()
 bob$connect("127.0.0.1") # if alice is on different computer, change ip
+
 # estimate
 alice$estimate()
+
 # ...
-# bootstrap
-alice$bootstrap()
-# ...
+
 # compare results to lm()
 summary(lm(y ~ X + 0))
 alice$summary()

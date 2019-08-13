@@ -79,7 +79,6 @@ NULL
 
 #' @export
 
-
 PrivReg <- R6Class(
   classname = "PrivReg",
   public = list(
@@ -306,7 +305,7 @@ PrivReg <- R6Class(
         if (!is.null(self$timings$se$end)) {
           se_time <- self$timings$se$end - self$timings$se$start
           cat("Std. Errors took", format(se_time), "\n")
-          units(prof_time) <- "secs"
+          units(se_time) <- "secs"
         }
         invisible(data.frame(
           "Estimation"  = est_time,
@@ -405,17 +404,27 @@ PrivReg <- R6Class(
     compute_SE      = function() {
       if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
-      R            <- self$control$iter
-      pred         <- private$pred_outgoing[, R] + private$pred_incoming[, R]
-      prd_incoming <- private$pred_incoming[,1:R]
-      res_outgoing <- apply(private$pred_outgoing[, 1:R], 2,
-                            function(prd) private$y - prd)
-      Hhat         <- prd_incoming %*% MASS::ginv(res_outgoing)
-      private$Pp   <- round(sum(diag(Hhat)))
+
+      # get the relevant pred and res
+      R             <- self$control$iter
+      pred          <- private$pred_outgoing[, R] + private$pred_incoming[, R]
+      pred_incoming <- private$pred_incoming[,1:R]
+      pred_outgoing <- private$pred_outgoing[,1:R]
+      res_outgoing  <- apply(pred_outgoing, 2, function(prd) private$y - prd)
+
+      # get rotated X_partner (RXp)
+      Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
+      eig           <- eigen(Hhat, symmetric = FALSE)
+      private$Pp    <- sum(zapsmall(eig$values) != 0)
+      RXp           <- eig$vectors[,1:private$Pp]
+      Z             <- cbind(private$X, RXp)
+
+      # Another hhat can also be obtained as
+      # Hhat <- pred_incoming %*% MASS::ginv(pred_outgoing)
       # Qr decomposition is a faster alternative to get RXp
-      # RXp <- eigen(Hhat)$vectors[,1:private$Pp]
-      RXp          <- qr.Q(qr(Hhat))[, 1:private$Pp]
-      Z            <- cbind(private$X, RXp)
+      # private$Pp    <- round(sum(diag(Hhat)))
+      # RXp          <- qr.Q(qr(Hhat))[, 1:private$Pp]
+
       if (self$family == "binomial") {
         prob  <- 1 / (1 + exp(-pred))
         wght  <- c(prob * (1 - prob))

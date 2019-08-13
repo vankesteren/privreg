@@ -35,10 +35,6 @@ bob <- PrivReg$new(
 alice$listen()
 bob$connect("127.0.0.1")
 
-
-alice$verbose <- FALSE
-bob$verbose <- TRUE
-
 # do the thing
 alice$estimate()
 
@@ -47,7 +43,8 @@ summary(lm(y ~ X + 0))
 alice$summary()
 bob$summary()
 
-
+# disconnect
+alice$disconnect()
 
 
 
@@ -93,3 +90,6 @@ alice$estimate()
 summary(glm(y_binom ~ X + 0, family = "binomial"))
 alice$summary()
 bob$summary()
+
+# disconnect
+alice$disconnect()

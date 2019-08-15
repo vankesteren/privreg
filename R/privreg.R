@@ -133,18 +133,25 @@ PrivReg <- R6Class(
       private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
     },
     set_control  = function(iter = 0L, max_iter = 1e3L, tol = 1e-8, se = TRUE) {
+      old_max_iter <- private$control$max_iter
       private$control <- list(
         iter     = iter,
         max_iter = max_iter,
         tol      = tol,
         se       = se
       )
-      if (nrow(private$betas) >= private$control$max_iter) {
-        private$betas <- private$betas[1:private$control$max_iter,]
+      if (old_max_iter >= max_iter) {
+        private$betas <- private$betas[1:max_iter,]
+        private$pred_incoming <- private$betas[, 1:max_iter]
+        private$pred_outgoing <- private$betas[, 1:max_iter]
       } else {
-        add <- private$control$max_iter - nrow(private$betas)
+        add <- max_iter - old_max_iter
         private$betas <-
           rbind(private$betas, matrix(0, nrow = add, ncol = private$P))
+        private$pred_incoming <-
+          cbind(private$pred_incoming, matrix(0, nrow = private$N, ncol = add))
+        private$pred_outgoing <-
+          cbind(private$pred_outgoing, matrix(0, nrow = private$N, ncol = add))
       }
     },
     listen       = function(port = 8080, callback) {

@@ -35,6 +35,7 @@
 #'  - `formula` model formula for the regression model at this institution
 #'  - `data` data frame for the variables in the model formula
 #'  - `family` response family as in glm. Currently only gaussian and binomial are supported
+#'  - `intercept` whether to include the intercept. Always use this instead of `+ 0` in the model formula
 #'  - `name` name of this institution
 #'  - `verbose` whether to print debug information
 #'  - `crypt_key` pre-shared key used to encrypt communication
@@ -111,8 +112,9 @@ PrivReg <- R6Class(
       se       = list(start = NULL, end = NULL)
     ),
     callback     = NULL,
-    initialize   = function(formula, data, family = "gaussian", name = "alice",
-                            verbose = FALSE, crypt_key = "testkey") {
+    initialize   = function(formula, data, family = "gaussian",
+                            intercept = TRUE, name = "alice", verbose = FALSE,
+                            crypt_key = "testkey") {
       # init callback
       self$callback <- function() invisible(NULL)
 
@@ -125,10 +127,12 @@ PrivReg <- R6Class(
 
       # private slots
       private$X     <- model.matrix(formula, data)
+      if (!intercept && colnames(private$X)[1] == "(Intercept)")
+        private$X <- private$X[, -1]
       private$y     <- unname(model.response(model.frame(formula, data)))
       private$N     <- nrow(private$X)
       private$P     <- ncol(private$X)
-      private$betas <- matrix(0, nrow = private$control$max_iter, ncol = private$P)
+      private$betas <- matrix(0, private$control$max_iter, private$P)
       private$pred_incoming <- matrix(0, private$N, private$control$max_iter)
       private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
     },

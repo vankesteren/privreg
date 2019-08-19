@@ -42,6 +42,7 @@ alice$elapsed()
 \item \code{formula} model formula for the regression model at this institution
 \item \code{data} data frame for the variables in the model formula
 \item \code{family} response family as in glm. Currently only gaussian and binomial are supported
+\item \code{intercept} whether to include the intercept. Always use this instead of \code{+ 0} in the model formula
 \item \code{name} name of this institution
 \item \code{verbose} whether to print debug information
 \item \code{crypt_key} pre-shared key used to encrypt communication

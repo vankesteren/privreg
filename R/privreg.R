@@ -454,7 +454,8 @@ PrivReg <- R6Class(
       # get rotated X_partner (RXp)
       Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
       eig           <- eigen(Hhat, symmetric = FALSE)
-      RXp           <- eig$vectors[,1:private$Pp]
+      mat_range     <- sum(zapsmall(eig$values, digits = 5) != 0)
+      RXp           <- eig$vectors[,1:mat_range]
       Z             <- cbind(private$X, RXp)
 
       # Another hhat can also be obtained as

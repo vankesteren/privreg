@@ -209,7 +209,9 @@ PrivReg <- R6Class(
       private$control$iter <- private$control$iter + 1L
       private$fit_model()
       private$compute_pred()
-      private$send_pred(type = "estimate")
+
+      # transfer dimension info before transferring prediction
+      private$send_p()
     },
     calculate_se = function(callback) {
       if (!missing(callback)) {
@@ -423,6 +425,21 @@ PrivReg <- R6Class(
     },
 
     # SE computation
+    send_p          = function() {
+      if (self$verbose) cat(self$name, "| Sending P.\n")
+      private$send_message("send_p", data = private$P)
+    },
+    return_p        = function() {
+      if (self$verbose) cat(self$name, "| Receiving and returning P.\n")
+      private$Pp <- private$msg_incoming$data
+      private$send_message("return_p", data = private$P)
+    },
+    receive_p       = function() {
+      if (self$verbose) cat(self$name, "| Receiving P.\n")
+      private$Pp <- private$msg_incoming$data
+      # start the estimation
+      private$send_pred(type = "estimate")
+    },
     compute_se      = function() {
       if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
@@ -437,7 +454,6 @@ PrivReg <- R6Class(
       # get rotated X_partner (RXp)
       Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
       eig           <- eigen(Hhat, symmetric = FALSE)
-      private$Pp    <- sum(zapsmall(eig$values) != 0)
       RXp           <- eig$vectors[,1:private$Pp]
       Z             <- cbind(private$X, RXp)
 
@@ -571,8 +587,10 @@ PrivReg <- R6Class(
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 
       switch(private$msg_incoming$type,
-        "estimate"         = private$run_estimate(),
-        "final_iter"       = private$final_estimate()
+        "estimate"   = private$run_estimate(),
+        "final_iter" = private$final_estimate(),
+        "send_p"     = private$return_p(),
+        "return_p"   = private$receive_p()
       )
     }
   )

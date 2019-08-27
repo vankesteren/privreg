@@ -125,6 +125,9 @@ PrivReg <- R6Class(
       self$family    <- family
       self$formula   <- formula
 
+      # Compute marginal parameters
+      self$beta <- stats::coef(stats::glm(formula, family = family, data = data))
+
       # private slots
       private$X     <- model.matrix(formula, data)
       if (!intercept && colnames(private$X)[1] == "(Intercept)")
@@ -132,7 +135,7 @@ PrivReg <- R6Class(
       private$y     <- unname(model.response(model.frame(formula, data)))
       private$N     <- nrow(private$X)
       private$P     <- ncol(private$X)
-      private$betas <- matrix(0, private$control$max_iter, private$P)
+      private$betas <- matrix(self$beta, private$P, private$control$max_iter)
       private$pred_incoming <- matrix(0, private$N, private$control$max_iter)
       private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
     },
@@ -145,13 +148,13 @@ PrivReg <- R6Class(
         se       = se
       )
       if (old_max_iter >= max_iter) {
-        private$betas <- private$betas[1:max_iter,]
-        private$pred_incoming <- private$betas[, 1:max_iter]
-        private$pred_outgoing <- private$betas[, 1:max_iter]
+        private$betas         <- private$betas[, 1:max_iter]
+        private$pred_incoming <- private$pred_incoming[, 1:max_iter]
+        private$pred_outgoing <- private$pred_outgoing[, 1:max_iter]
       } else {
         add <- max_iter - old_max_iter
         private$betas <-
-          rbind(private$betas, matrix(0, nrow = add, ncol = private$P))
+          cbind(private$betas, matrix(self$beta, nrow = private$P, ncol = add))
         private$pred_incoming <-
           cbind(private$pred_incoming, matrix(0, nrow = private$N, ncol = add))
         private$pred_outgoing <-
@@ -242,8 +245,8 @@ PrivReg <- R6Class(
     },
     converged    = function() {
       if (private$control$iter < 2) return(FALSE)
-      diffs <- abs(private$betas[private$control$iter] -
-                   private$betas[private$control$iter - 1])
+      diffs <- abs(private$betas[, private$control$iter] -
+                   private$betas[, private$control$iter - 1])
       if (all(diffs < private$control$tol)) TRUE else FALSE
     },
     plot_paths   = function() {
@@ -254,7 +257,7 @@ PrivReg <- R6Class(
       if (!requireNamespace("firatheme", quietly = TRUE))
         stop("Install firatheme: devtools::install_github(\"vankesteren/firatheme\")")
       `%>%` <- dplyr::`%>%`
-      betas <- private$betas[1:private$control$iter,]
+      betas <- t(private$betas[, 1:private$control$iter])
       colnames(betas) <- colnames(private$X)
       tibble::as_tibble(betas) %>%
         dplyr::mutate(iter = 1:private$control$iter) %>%
@@ -371,7 +374,7 @@ PrivReg <- R6Class(
         binomial = fit_binomial(private$y, private$X, pred_in, pred_out)
       )
 
-      private$betas[private$control$iter, ] <- self$beta
+      private$betas[, private$control$iter] <- self$beta
     },
     compute_pred    = function() {
       if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
@@ -454,8 +457,8 @@ PrivReg <- R6Class(
       # get rotated X_partner (RXp)
       Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
       eig           <- eigen(Hhat, symmetric = FALSE)
-      mat_range     <- sum(zapsmall(eig$values, digits = 5) != 0)
-      RXp           <- eig$vectors[,1:mat_range]
+      mat_range     <- private$determine_range(eig$values)
+      RXp           <- eig$vectors[, 1:mat_range]
       Z             <- cbind(private$X, RXp)
 
       # Another hhat can also be obtained as
@@ -476,6 +479,22 @@ PrivReg <- R6Class(
       self$SE <- Re(sqrt(diag(VCOV)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
+    },
+    determine_range = function(ev) {
+      # determine how many eigenvectors should go into Z based on eigenvalues
+
+      # changepoint may underestimate
+      changepoint <- changepoint::cpt.meanvar(log(Mod(ev)))@cpts[1]
+
+      # zapsmall 11 may overestimate
+      zap11 <- sum(zapsmall(Mod(ev), 11) > 0)
+
+      wm <- weighted.mean(
+        c(changepoint, zap11),
+        c(        0.4,   0.6) # how much faith to put in each metric
+      )
+
+      return(round(wm))
     },
 
     # networking

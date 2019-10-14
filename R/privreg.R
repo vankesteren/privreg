@@ -377,7 +377,7 @@ PrivReg <- R6Class(
 
       self$beta  <- switch(self$family,
         gaussian = fit_gaussian(private$y, private$X, pred_in),
-        binomial = fit_binomial(private$y, private$X, pred_in, pred_out)
+        binomial = fit_binomial(private$y, private$X, pred_in)
       )
 
       private$betas[, private$control$iter] <- self$beta
@@ -455,17 +455,27 @@ PrivReg <- R6Class(
 
       # get the relevant pred and res
       R             <- private$control$iter
-      pred          <- private$pred_outgoing[, R] + private$pred_incoming[, R]
-      pred_incoming <- private$pred_incoming[,1:R]
-      pred_outgoing <- private$pred_outgoing[,1:R]
-      res_outgoing  <- apply(pred_outgoing, 2, function(prd) private$y - prd)
+      # we only need min(R, N) iterations because the max rank is N.
+      pred_incoming <- private$pred_incoming[,1:(min(R, private$N))]
+      pred_outgoing <- private$pred_outgoing[,1:(min(R, private$N))]
+      pred          <- private$pred_outgoing[,R] + private$pred_incoming[,R]
+
+
+      if (self$family == "binomial") {
+        pred_matrix  <- pred_incoming + pred_outgoing
+        prob_matrix  <- apply(pred_matrix, 2, function(x) 1/(1 + exp(x)))
+        wght_matrix  <- apply(prob_matrix, 2, function(x) x * (1 - x))
+        res_outgoing <- apply(pred_outgoing, 2, function(prd) private$y - prd)
+        res_outgoing <- res_outgoing * sqrt(wght_matrix)
+      } else {
+        res_outgoing  <- apply(pred_outgoing, 2, function(prd) private$y - prd)
+      }
 
       # get rotated X_partner (RXp)
       Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
       eig           <- RSpectra::eigs(Hhat, k = private$Pp)
       mat_range     <- private$determine_range(eig$values)
       RXp           <- eig$vectors[, 1:mat_range]
-      Z             <- cbind(private$X, RXp)
 
       # Another hhat can also be obtained as
       # Hhat <- pred_incoming %*% MASS::ginv(pred_outgoing)
@@ -481,6 +491,8 @@ PrivReg <- R6Class(
         invs2 <- (private$N - P) / c(crossprod(private$y - pred))
         wght  <- rep(invs2, private$N)
       }
+
+      Z       <- cbind(private$X, RXp)
       VCOV    <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
       self$SE <- Re(sqrt(diag(VCOV)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))

@@ -17,16 +17,18 @@ alice_data <- data.frame(y, X[, 1:5])
 bob_data   <- data.frame(y, X[, 6:11])
 
 alice <- PrivReg$new(
-  formula = y ~ . + 0,
+  formula = y ~ .,
   data = alice_data,
+  intercept = FALSE,
   name = "alice",
   verbose = TRUE,
   crypt_key = "maastricht"
 )
 
 bob <- PrivReg$new(
-  formula = y ~ . + 0,
+  formula = y ~ .,
   data = bob_data,
+  intercept = FALSE,
   name = "bob  ",
   verbose = TRUE,
   crypt_key = "maastricht"
@@ -54,13 +56,13 @@ httpuv::stopAllServers()
 # binomial outcome
 invlogit <- function(x) 1 / (1 + exp(-x))
 set.seed(45)
-S <- rWishart(1, 10, diag(10))[,,1] / 10
-X <- MASS::mvrnorm(100, rep(0, 10), S)
-b <- runif(10, -1, 1)
+S <- rWishart(1, 40, diag(40))[,,1] / 40
+X <- MASS::mvrnorm(1000, rep(0, 40), S)
+b <- runif(40, -1, 1)
 y_binom  <- vapply(invlogit(X %*% b), function(p) rbinom(1, 1, prob = p), 1)
 
-alice_data <- data.frame(y = y_binom, X[, 1:5])
-bob_data   <- data.frame(y = y_binom, X[, 6:10])
+alice_data <- data.frame(y = y_binom, X[, 1:20])
+bob_data   <- data.frame(y = y_binom, X[, 21:40])
 
 alice <- PrivReg$new(
   formula = y ~ . + 0,

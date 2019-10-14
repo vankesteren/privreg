@@ -125,16 +125,22 @@ PrivReg <- R6Class(
       self$family    <- family
       self$formula   <- formula
 
-      # Compute marginal parameters
-      self$beta <- stats::coef(stats::glm(formula, family = family, data = data))
-
-      # private slots
+      # data information
       private$X     <- model.matrix(formula, data)
       if (!intercept && colnames(private$X)[1] == "(Intercept)")
         private$X <- private$X[, -1]
       private$y     <- unname(model.response(model.frame(formula, data)))
       private$N     <- nrow(private$X)
       private$P     <- ncol(private$X)
+
+      # Compute marginal parameters
+      self$beta <- stats::glm.fit(
+        x      = private$X,
+        y      = private$y,
+        family = get(family)()
+      )$coefficients
+
+      # prepare for iterations
       private$betas <- matrix(self$beta, private$P, private$control$max_iter)
       private$pred_incoming <- matrix(0, private$N, private$control$max_iter)
       private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
@@ -456,7 +462,7 @@ PrivReg <- R6Class(
 
       # get rotated X_partner (RXp)
       Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
-      eig           <- eigen(Hhat, symmetric = FALSE)
+      eig           <- RSpectra::eigs(Hhat, k = private$Pp)
       mat_range     <- private$determine_range(eig$values)
       RXp           <- eig$vectors[, 1:mat_range]
       Z             <- cbind(private$X, RXp)
@@ -484,17 +490,19 @@ PrivReg <- R6Class(
       # determine how many eigenvectors should go into Z based on eigenvalues
 
       # changepoint may underestimate
-      changepoint <- changepoint::cpt.meanvar(log(Mod(ev)))@cpts[1]
+      # changepoint <- changepoint::cpt.meanvar(log(Mod(ev)))@cpts[1]
 
       # zapsmall 11 may overestimate
       zap11 <- sum(zapsmall(Mod(ev), 11) > 0)
 
-      wm <- weighted.mean(
-        c(changepoint, zap11),
-        c(        0.4,   0.6) # how much faith to put in each metric
-      )
+      # wm <- weighted.mean(
+      #   c(changepoint, zap11),
+      #   c(        0.4,   0.6) # how much faith to put in each metric
+      # )
 
-      return(round(wm))
+      # return(round(wm))
+
+      return(zap11)
     },
 
     # networking

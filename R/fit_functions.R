@@ -5,17 +5,8 @@ fit_gaussian <- function(y, X, pred_other) {
   return(c(b_hat))
 }
 
-fit_binomial <- function(y, X, pred_other, pred_self) {
-  # create working response for IRLS update
-  pred  <- pred_other + pred_self
-  prob  <- 1 / (1 + exp(-pred))
-  wght  <- prob * (1 - prob)
-  eps   <- .Machine$double.eps * 10
-  if (any(wght < eps) || any(wght > 1 - eps))
-    wght <- vapply(wght, function(w) min(max(eps, w), 1 - eps), 0.5)
-  work  <- pred + (y - prob) / wght
-  y_res <- work - pred_other
-  W     <- Matrix::Diagonal(x = c(wght))
-  b_hat <- Matrix::solve(Matrix::crossprod(X, W %*% X), Matrix::crossprod(X, W %*% y_res))
-  return(as.vector(b_hat))
+fit_binomial <- function(y, X, pred_other) {
+  fit <- stats::glm.fit(X, y, offset = pred_other, family = binomial(),
+                        intercept = FALSE)
+  return(as.vector(fit[["coefficients"]]))
 }

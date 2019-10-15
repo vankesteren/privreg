@@ -55,7 +55,7 @@ httpuv::stopAllServers()
 
 # binomial outcome
 invlogit <- function(x) 1 / (1 + exp(-x))
-set.seed(45)
+set.seed(48)
 S <- rWishart(1, 20, diag(20))[,,1] / 20
 X <- MASS::mvrnorm(1000, rep(0, 20), S)
 b <- runif(20, -1, 1)

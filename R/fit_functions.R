@@ -6,7 +6,7 @@ fit_gaussian <- function(y, X, pred_other) {
 }
 
 fit_binomial <- function(y, X, pred_other) {
-  fit <- stats::glm.fit(X, y, offset = pred_other, family = binomial(),
+  fit <- stats::glm.fit(X, y, offset = pred_other, family = stats::binomial(),
                         intercept = FALSE)
   return(as.vector(fit[["coefficients"]]))
 }

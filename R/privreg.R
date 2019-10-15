@@ -452,48 +452,62 @@ PrivReg <- R6Class(
     compute_se      = function() {
       if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
+      R <- private$control$iter
 
-      # get the relevant pred and res
-      R             <- private$control$iter
+      fam <- if (self$family == "binomial") binomial() else gaussian()
+
+      # Partitioned linear prediction matrices
       # we only need min(R, N) iterations because the max rank is N.
-      pred_incoming <- private$pred_incoming[,1:(min(R, private$N))]
-      pred_outgoing <- private$pred_outgoing[,1:(min(R, private$N))]
-      pred          <- private$pred_outgoing[,R] + private$pred_incoming[,R]
+      Eta_self  <- private$pred_outgoing[,1:(min(R, private$N))]
+      Eta_other <- private$pred_incoming[,1:(min(R, private$N))]
+      Eta       <- Eta_self + Eta_other
 
+      # Outcome matrix
+      Y <- matrix(private$y, private$N, min(R, private$N))
+
+      # Other necessary glm matrices
+      Mu    <- apply(Eta, 2, fam$linkinv) # mu matrix - mean of response
+      Delta <- apply(Eta, 2, fam$mu.eta)  # dmu/deta matrix
+      Vari  <- apply(Mu, 2, fam$variance) # variance function matrix
+      W     <- sqrt(Delta * Delta / Vari) # weights matrix
+
+      # Also perform this for the converged iteration (note lowercase letters)
+      eta   <- private$pred_outgoing[,R] + private$pred_incoming[,R]
+      mu    <- fam$linkinv(eta)
+      delta <- fam$mu.eta(eta)
+      vari  <- fam$variance(mu)
+      w     <- sqrt(delta^2 / vari)
+      W     <- matrix(w, nrow = private$N, ncol = min(R, private$N))
+
+      # residual matrix on the working response level
+      Eps_self <- Eta_other + (Y - Mu) / Delta
+
+      # Weighted hat matrix
+      Hhat  <- (Eta_other) %*% MASS::ginv(W * Eps_self) #(why not W * Eta_other??)
+
+      # Eigendecomposition with max Pp eigenvalues
+      eig        <- RSpectra::eigs(Hhat, k = private$Pp)
+      Hhat_range <- private$determine_range(eig$values)
+
+      # Weighted rotated Xpartner matrix
+      RXp <- eig$vectors[, 1:Hhat_range]
+
+      # Unweighted rotated Xpartner
+      # RXp  <- apply(WRXp, 2, function(rxp) rxp * w)
 
       if (self$family == "binomial") {
-        pred_matrix  <- pred_incoming + pred_outgoing
-        prob_matrix  <- apply(pred_matrix, 2, function(x) 1/(1 + exp(x)))
-        wght_matrix  <- apply(prob_matrix, 2, function(x) x * (1 - x))
-        res_outgoing <- apply(pred_outgoing, 2, function(prd) private$y - prd)
-        res_outgoing <- res_outgoing * sqrt(wght_matrix)
+        wght  <- w
       } else {
-        res_outgoing  <- apply(pred_outgoing, 2, function(prd) private$y - prd)
+        P    <- private$P + private$Pp
+        invs <- sqrt((private$N - P) / c(crossprod(private$y - eta)))
+        wght <- rep(invs, private$N)
       }
 
-      # get rotated X_partner (RXp)
-      Hhat          <- pred_incoming %*% MASS::ginv(res_outgoing)
-      eig           <- RSpectra::eigs(Hhat, k = private$Pp)
-      mat_range     <- private$determine_range(eig$values)
-      RXp           <- eig$vectors[, 1:mat_range]
+      # Augmented X matrix
+      aX <- cbind(private$X, RXp)
 
-      # Another hhat can also be obtained as
-      # Hhat <- pred_incoming %*% MASS::ginv(pred_outgoing)
-      # Qr decomposition is a faster alternative to get RXp
-      # private$Pp    <- round(sum(diag(Hhat)))
-      # RXp          <- qr.Q(qr(Hhat))[, 1:private$Pp]
-
-      if (self$family == "binomial") {
-        prob  <- 1 / (1 + exp(-pred))
-        wght  <- c(prob * (1 - prob))
-      } else {
-        P     <- private$P + private$Pp
-        invs2 <- (private$N - P) / c(crossprod(private$y - pred))
-        wght  <- rep(invs2, private$N)
-      }
-
-      Z       <- cbind(private$X, RXp)
-      VCOV    <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
+      # VCOV
+      VCOV    <- MASS::ginv(crossprod(aX*wght))[1:private$P, 1:private$P]
       self$SE <- Re(sqrt(diag(VCOV)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()

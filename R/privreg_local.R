@@ -106,7 +106,7 @@ privreg_local <- function(y, Xa, Xb, family = gaussian(),
   fit <- glm(y ~ Xa + Xb + 0, family = family)
   return(list(
     full = list(coef = unname(coef(fit)), se = unname(sqrt(diag(vcov(fit))))),
-    priv = list(coef = c(bhat_a[,i], bhat_b[,i]), se = c(se_a, se_b))
+    priv = list(coef = c(bhat_a[,i], bhat_b[,i]), se = c(se_a, se_b), iter = i)
   ))
 }
 

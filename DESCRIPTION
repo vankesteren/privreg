@@ -1,11 +1,11 @@
 Package: privreg
 Type: Package
 Title: Privacy-preserving Regression
-Version: 0.7.10
+Version: 0.8.0
 Author: Erik-Jan van Kesteren
 Maintainer: Erik-Jan van Kesteren <e.vankesteren1@uu.nl>
-Description: Perform regression on vertically partitioned data using block
-    coordinate descent.
+Description: Generalized linear modeling on vertically partitioned data using 
+    block coordinate descent.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true

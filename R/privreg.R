@@ -2,49 +2,67 @@
 #'
 #' Perform privacy-preserving regression modeling across different institutions.
 #' This class implements regression with gaussian and binomial responses using
-#' block coordinate descent (Van Kesteren, Sun, and Ippel; in preparation).
+#' block coordinate descent.
 #'
 #' @name PrivReg
 #'
 #' @section Usage:
-#' \preformatted{alice <- PrivReg$new(formula, data, family = "gaussian",
-#'                      name = "alice", verbose = FALSE, crypt_key = "testkey")
+#' ```
+#' alice <- PrivReg$new(
+#'   formula,
+#'   data,
+#'   family    = "gaussian",
+#'   name      = "alice",
+#'   verbose   = FALSE,
+#'   debug     = FALSE,
+#'   crypt_key = "testkey"
+#' )
 #'
 #' alice$listen()
 #' alice$connect(127.0.0.1)
 #' alice$disconnect()
 #'
 #' alice$estimate()
-#' alice$profile()
+#' alice$calculate_se()
 #'
-#' alice$loglik()
 #' alice$summary()
+#' alice$coef()
+#' alice$converged()
 #' alice$plot_paths()
 #' alice$elapsed()
-#' }
+#' ```
 #'
 #' @section Arguments:
-#' \describe{
-#'  \item{alice}{a PrivReg object}
-#'  \item{formula}{model formula for the regression model at this institution}
-#'  \item{data}{data frame for the variables in the model formula}
-#'  \item{family}{response family as in glm. Currently only gaussian and binomial are supported}
-#'  \item{name}{name of this institution}
-#'  \item{verbose}{whether to print debug information}
-#'  \item{crypt_key}{pre-shared key used to encrypt communication}
-#' }
+#'  - `formula` model formula for the regression model at this institution
+#'  - `data` data frame for the variables in the model formula
+#'  - `family` response family as in glm. Currently only gaussian and binomial are supported
+#'  - `intercept` whether to include the intercept. Always use this instead of `+ 0` in the model formula
+#'  - `name` name of this institution
+#'  - `verbose` whether to print information
+#'  - `debug` whether to print debug statements
+#'  - `crypt_key` pre-shared key used to encrypt communication
+#'
 #'
 #' @section Details:
-#' \code{$new()} instantiates and returns a new PrivReg object.
-#' \code{$listen()} listens for incoming connections from a partner institution
-#' \code{$connect()} connects to a listening partner institution
-#' \code{$disconnect()} disconnects from the partner institution
-#' \code{$estimate()} computes parameter estimates through block coordinate descent
-#' \code{$profile()} computes confidence intervals and standard errors using profile likelihood
-#' \code{$loglik()} returns full model log-likelihood
-#' \code{$summary()} displays a summary of the object
-#' \code{$plot_paths()} plots the paths of the parameters over the estimation iterations
-#' \code{$elapsed()} print information about the elapsed time in estimation and profiling
+#'  - `$new()` instantiates and returns a new PrivReg object.
+#'  - `$listen()` listens for incoming connections from a partner institution
+#'  - `$connect()` connects to a listening partner institution
+#'  - `$disconnect()` disconnects from the partner institution
+#'  - `$set_control()` sets control parameters. See below for more info
+#'  - `$estimate()` computes parameter estimates through block coordinate descent
+#'  - `$calculate_se()` computes standard errors using projection method
+#'  - `$converged()` test whether the algorithm has converged
+#'  - `$summary()` displays a summary of the object, invisibly returns the coef matrix
+#'  - `$coef()` returns the model coefficients
+#'  - `$plot_paths()` plots the paths of the parameters over the estimation iterations
+#'  - `$elapsed()` print information about the elapsed time
+#'
+#'
+#'
+#' @section Control parameters:
+#'  - `max_iter` maximum number of iterations of the coordinate descent algorithm
+#'  - `tol` PrivReg is converged if all beta changes are below `tol`.
+#'  - `se` Whether to compute standard errors
 #'
 #' @importFrom R6 R6Class
 #'
@@ -57,18 +75,20 @@
 #' X <- matrix(rnorm(1000), 100)
 #' b <- runif(10, -1, 1)
 #' y <- X %*% b + rnorm(100, sd = sqrt(b %*% S %*% b))
+#'
 #' # split into alice and bob institutions
 #' alice_data <- data.frame(y, X[, 1:5])
 #' bob_data   <- data.frame(y, X[, 6:10])
+#'
 #' # create connection
 #' alice$listen()
 #' bob$connect("127.0.0.1") # if alice is on different computer, change ip
+#'
 #' # estimate
 #' alice$estimate()
+#'
 #' # ...
-#' # profile
-#' alice$profile()
-#' # ...
+#'
 #' # compare results to lm()
 #' summary(lm(y ~ X + 0))
 #' alice$summary()
@@ -79,77 +99,94 @@ NULL
 
 #' @export
 
-
 PrivReg <- R6Class(
   classname = "PrivReg",
   public = list(
-    beta          = NULL,
-    SE            = NULL,
-    family        = "gaussian",
-    formula       = NULL,
-    control       = list(
-      iter      = 0L,
-      prof_iter = 0L,
-      max_iter  = 1e3L,
-      tol       = 1e-8,
-      prof_tol  = 1e-7,
-      prof_Q    = 2
-    ),
-    verbose       = NULL,
-    name          = NULL,
-    crypt_key     = NULL,
-    timings       = list(
+    beta         = NULL,
+    SE           = NULL,
+    family       = "gaussian",
+    formula      = NULL,
+    verbose      = NULL,
+    debug        = NULL,
+    name         = NULL,
+    crypt_key    = NULL,
+    timings      = list(
       estimate = list(start = NULL, end = NULL),
       se       = list(start = NULL, end = NULL)
     ),
-    callback      = NULL,
-    initialize    = function(formula, data, family = "gaussian", name = "alice",
-                             verbose = FALSE, crypt_key = "testkey") {
+    callback     = NULL,
+    initialize   = function(formula, data, family = "gaussian",
+                            intercept = TRUE, name = "alice", verbose = FALSE,
+                            debug = FALSE, crypt_key = "testkey") {
       # init callback
       self$callback <- function() invisible(NULL)
 
       # public slots
       self$name      <- name
       self$verbose   <- verbose
+      self$debug     <- debug
       self$crypt_key <- crypt_key
-      self$family    <- family
       self$formula   <- formula
 
-      # private slots
-      private$X             <- model.matrix(formula, data)
-      private$y             <- unname(model.response(model.frame(formula, data)))
-      private$N             <- nrow(private$X)
-      private$P             <- ncol(private$X)
-      private$betas         <- matrix(0, nrow = self$control$max_iter,
-                                      ncol = private$P)
-      private$pred_incoming <- matrix(0, private$N, self$control$max_iter)
-      private$pred_outgoing <- matrix(0, private$N, self$control$max_iter)
-    },
-    set_control   = function(iter = 0L, prof_iter = 0L, max_iter = 1e3L,
-                             tol = 1e-8, prof_tol = 1e-7) {
-      self$control <- list(
-        iter      = iter,
-        prof_iter = prof_iter,
-        max_iter  = max_iter,
-        tol       = tol,
-        prof_tol  = prof_tol
-      )
+      # family
+      if (is.character(family))
+        family <- get(family, mode = "function", envir = parent.frame())
+      if (is.function(family))
+        self$family <- family()
+      if (is.null(self$family$family)) {
+        print(self$family)
+        stop("'family' not recognized")
+      }
 
-      if (nrow(private$betas) > self$control$max_iter)
-        private$betas <- private$betas[1:self$control$max_iter]
-      if (nrow(private$betas) < self$control$max_iter)
-        private$betas <- rbind(
-          private$betas,
-          matrix(0, nrow = self$control$max_iter - nrow(private$betas),
-                 ncol = private$P)
-        )
+      # data information
+      private$X     <- model.matrix(formula, data)
+      if (!intercept && colnames(private$X)[1] == "(Intercept)")
+        private$X <- private$X[, -1]
+      private$y     <- unname(model.response(model.frame(formula, data)))
+      private$N     <- nrow(private$X)
+      private$P     <- ncol(private$X)
+
+      # Compute marginal parameters
+      self$beta <- stats::glm.fit(
+        x      = private$X,
+        y      = private$y,
+        family = self$family
+      )$coefficients
+
+      # prepare for iterations
+      private$betas <- matrix(self$beta, private$P, private$control$max_iter)
+      private$pred_incoming <- matrix(0, private$N, private$control$max_iter)
+      private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
     },
-    listen        = function(port = 8080, callback) {
+    set_control  = function(iter = 0L, max_iter = 1e4L, tol = 1e-8, se = TRUE) {
+      old_max_iter <- private$control$max_iter
+      private$control <- list(
+        iter     = iter,
+        max_iter = max_iter,
+        tol      = tol,
+        se       = se
+      )
+      if (old_max_iter >= max_iter) {
+        private$betas         <- private$betas[, 1:max_iter]
+        private$pred_incoming <- private$pred_incoming[, 1:max_iter]
+        private$pred_outgoing <- private$pred_outgoing[, 1:max_iter]
+      } else {
+        add <- max_iter - old_max_iter
+        private$betas <-
+          cbind(private$betas, matrix(self$beta, nrow = private$P, ncol = add))
+        private$pred_incoming <-
+          cbind(private$pred_incoming, matrix(0, nrow = private$N, ncol = add))
+        private$pred_outgoing <-
+          cbind(private$pred_outgoing, matrix(0, nrow = private$N, ncol = add))
+      }
+    },
+    listen       = function(port = 8080, callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose) cat(paste(self$name, "| starting server on port:", port, "\n"))
+      if (self$debug)
+        cat(paste(self$name, "| starting server on port:", port, "\n"))
       private$srv <- httpuv::startServer(
         host = "0.0.0.0",
         port = port,
@@ -165,12 +202,12 @@ PrivReg <- R6Class(
         )
       )
     },
-    connect       = function(url, port = 8080, callback) {
+    connect      = function(url, port = 8080, callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose) cat(paste(self$name, "| opening websocket connection\n"))
+      if (self$debug) cat(paste(self$name, "| opening websocket connection\n"))
 
       full_url <- paste0("ws://", url, ":", port)
 
@@ -183,46 +220,38 @@ PrivReg <- R6Class(
       private$setup_ws_client()
       private$ws$connect()
     },
-    estimate      = function(callback) {
+    estimate     = function(callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
       if (!self$connected()) stop("Connect to another institution first.")
-      if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
+      if (self$debug) cat(paste(self$name, "| Performing initial run\n"))
       self$timings$estimate$start <- Sys.time()
-      self$control$iter <- self$control$iter + 1L
+      private$control$iter <- private$control$iter + 1L
       private$fit_model()
       private$compute_pred()
-      private$send_pred(type = "estimate")
+
+      # transfer dimension info before transferring prediction
+      private$send_p()
     },
-    profile       = function(callback) {
+    calculate_se = function(callback) {
       if (!missing(callback)) {
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose) cat(paste(self$name, "| Profiling...\n"))
-      self$timings$profile$start <- Sys.time()
-      private$get_marginal_ses()
-      private$create_prof_probe()
-      private$init_prof_pred_in()
-      private$init_prof_pred_out()
-      private$init_prof_betas()
-      private$init_prof_conv()
-      private$init_prof_lls()
-      private$get_prof_betas()
-      private$create_prof_preds()
-      private$send_prof_preds()
+      private$compute_se()
+      private$run_callback()
     },
-    disconnect    = function() {
-      if (self$verbose) cat(paste(self$name, "| Disconnecting.\n"))
+    disconnect   = function() {
+      if (self$debug) cat(paste(self$name, "| Disconnecting.\n"))
       if (inherits(private$ws, "WebSocket")) private$ws$close()
       if (!is.null(private$srv)) {
         httpuv::stopServer(private$srv)
         private$srv <- NULL
       }
     },
-    connected     = function() {
+    connected    = function() {
       if (!is.null(private$srv)) {
         if (is.null(private$ws)) return(FALSE)
         status <- private$ws$request$HEADERS["connection"]
@@ -233,12 +262,25 @@ PrivReg <- R6Class(
         return(FALSE)
       }
     },
-    converged     = function() {
-      if (self$control$iter < 2) return(FALSE)
-      diffs <- abs(private$betas[self$control$iter] - private$betas[self$control$iter - 1])
-      if (all(diffs < self$control$tol)) TRUE else FALSE
+    converged    = function() {
+      i <- private$control$iter
+      if (i < 2) return(FALSE)
+      diffs <- abs(private$betas[, i] - private$betas[, i - 1])
+      sum(diffs) < private$control$tol
     },
-    plot_paths    = function() {
+    deviance     = function() {
+      i   <- private$control$iter
+      eta <- private$pred_incoming[, i] + private$pred_outgoing[, i]
+      mu  <- self$family$linkinv(eta)
+      return(sum(self$family$dev.resids(private$y, mu, rep(1, private$N))))
+    },
+    residuals    = function() {
+      i    <- private$control$iter
+      eta  <- private$pred_incoming[, i] + private$pred_outgoing[, i]
+      mu   <- self$family$linkinv(eta)
+      return((private$y - mu)/self$family$mu.eta(eta))
+    },
+    plot_paths   = function() {
       if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Install ggplot2")
       if (!requireNamespace("dplyr", quietly = TRUE))   stop("Install dplyr")
       if (!requireNamespace("tidyr", quietly = TRUE))   stop("Install tidyr")
@@ -246,10 +288,10 @@ PrivReg <- R6Class(
       if (!requireNamespace("firatheme", quietly = TRUE))
         stop("Install firatheme: devtools::install_github(\"vankesteren/firatheme\")")
       `%>%` <- dplyr::`%>%`
-      betas <- private$betas[1:self$control$iter,]
+      betas <- t(private$betas[, 1:private$control$iter])
       colnames(betas) <- colnames(private$X)
       tibble::as_tibble(betas) %>%
-        dplyr::mutate(iter = 1:self$control$iter) %>%
+        dplyr::mutate(iter = 1:private$control$iter) %>%
         tidyr::gather("param", "value", -iter) %>%
         ggplot2::ggplot(ggplot2::aes(x = iter, y = value, colour = param)) +
         ggplot2::geom_line(size = 1) +
@@ -257,19 +299,21 @@ PrivReg <- R6Class(
         firatheme::scale_colour_fira() +
         ggplot2::labs(x = "Iteration", y = "Beta value", color = "Predictor")
     },
-    loglik        = function() {
-      private$get_loglik(self$beta, private$pred_incoming)
-    },
-    summary       = function() {
+    summary      = function() {
       frml <- as.character(self$formula)
       if (is.null(self$SE)) {
         cat(sep = "", "\n",
             "Privacy-preserving GLM\n",
             "----------------------\n\n",
-            "family:      ", self$family, "\n",
+            "family:      ", self$family$family, "\n",
             "formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
-            "iterations:  ", self$control$iter, "\n")
-        return()
+            "iterations:  ", private$control$iter, "\n\n",
+            "Coefficients:\n")
+        tab <- as.matrix(self$beta)
+        rownames(tab) <- colnames(private$X)
+        colnames(tab) <- "Estimate"
+        print(tab)
+        return(invisible(tab))
       }
 
       bts <- self$beta
@@ -287,9 +331,9 @@ PrivReg <- R6Class(
       cat(sep = "", "\n",
         "Privacy-preserving GLM\n",
         "----------------------\n\n",
-        "family:      ", self$family, "\n",
+        "family:      ", self$family$family, "\n",
         "formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
-        "iterations:  ", self$control$iter, "\n\n",
+        "iterations:  ", private$control$iter, "\n\n",
         "Coefficients:\n"
       )
       stats::printCoefmat(tab, cs.ind = c(1, 2), tst.ind = 5,
@@ -297,20 +341,25 @@ PrivReg <- R6Class(
       cat("\n")
       invisible(tab)
     },
-    elapsed       = function() {
+    coef         = function() {
+      coefs <- self$beta
+      names(coefs) <- colnames(private$X)
+      coefs
+    },
+    elapsed      = function() {
       if (!is.null(self$timings$estimate$end)) {
         est_time <- self$timings$estimate$end - self$timings$estimate$start
         cat("Estimation took", format(est_time), "\n")
         units(est_time) <- "secs"
 
-        if (!is.null(self$timings$profile$end)) {
-          prof_time <- self$timings$profile$end - self$timings$profile$start
-          cat("Profiling took", format(prof_time), "\n")
-          units(prof_time) <- "secs"
+        if (!is.null(self$timings$se$end)) {
+          se_time <- self$timings$se$end - self$timings$se$start
+          cat("Std. Errors took", format(se_time), "\n")
+          units(se_time) <- "secs"
         }
         invisible(data.frame(
-          Estimation = est_time,
-          Profile    = ifelse(is.null(self$timings$profile$end), NA, prof_time)
+          "Estimation"  = est_time,
+          "Std. Errors" = ifelse(is.null(self$timings$se$end), NA, se_time)
         ))
       } else {
         cat("No timing information.")
@@ -318,6 +367,14 @@ PrivReg <- R6Class(
     }
   ),
   private = list(
+    # control parameters
+    control      = list(
+      iter     = 0L,
+      max_iter = 1e4L,
+      tol      = 1e-8,
+      se       = TRUE
+    ),
+
     # slots
     X               = NULL, # model matrix
     y               = NULL, # outcome var
@@ -339,92 +396,159 @@ PrivReg <- R6Class(
 
     # estimation
     fit_model       = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing beta.\n"))
-      pred_in  <- private$pred_incoming[, self$control$iter]
-      pred_out <- private$pred_outgoing[, max(1, self$control$iter - 1)]
+      if (self$debug) cat(paste(self$name, "| Computing beta.\n"))
+      pred_in  <- private$pred_incoming[, private$control$iter]
+      pred_out <- private$pred_outgoing[, max(1, private$control$iter - 1)]
 
-      self$beta  <- switch(self$family,
-        gaussian = fit_gaussian(private$y, private$X, pred_in),
-        binomial = fit_binomial(private$y, private$X, pred_in, pred_out)
-      )
+      glm_fit  <- glm.fit(private$X, private$y, intercept = FALSE,
+                          family = self$family, offset = pred_in)
+      self$beta <- as.vector(glm_fit[["coefficients"]])
 
-      private$betas[self$control$iter, ] <- self$beta
+      # self$beta  <- switch(self$family,
+      #   gaussian = fit_gaussian(private$y, private$X, pred_in),
+      #   binomial = fit_binomial(private$y, private$X, pred_in)
+      # )
+
+      private$betas[, private$control$iter] <- self$beta
     },
     compute_pred    = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
-      private$pred_outgoing[,self$control$iter] <- private$X %*% self$beta
+      if (self$debug) cat(paste(self$name, "| Computing prediction.\n"))
+      private$pred_outgoing[,private$control$iter] <- private$X %*% self$beta
     },
     send_pred       = function(type) {
-      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
-      private$send_message(type = type, data = private$pred_outgoing[, self$control$iter])
+      if (self$debug) cat(paste(self$name, "| Sending prediction.\n"))
+      private$send_message(type = type, data = private$pred_outgoing[, private$control$iter])
     },
     run_estimate    = function() {
       if (is.null(self$timings$estimate$start))
         self$timings$estimate$start <- Sys.time()
-      self$control$iter <- self$control$iter + 1L
-      private$pred_incoming[,self$control$iter] <- private$msg_incoming$data
+      private$control$iter <- private$control$iter + 1L
+      private$pred_incoming[,private$control$iter] <- private$msg_incoming$data
       private$fit_model()
       private$compute_pred()
-      if (self$verbose) cat(self$name, "| iteration:", self$control$iter, "\n")
+      if (self$verbose) {
+        cat(self$name,
+            "| iteration:", private$control$iter,
+            "| deviance:", format(self$deviance(), nsmall = 8), "\n")
+      }
+
       if (self$converged()) {
         message("PrivReg converged")
         self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
-        private$compute_SE()
+        if (private$control$se) private$compute_se()
         private$run_callback()
-      } else if (self$control$iter < self$control$max_iter) {
+      } else if (private$control$iter < private$control$max_iter) {
         private$send_pred(type = "estimate")
       } else {
         message("Maximum iterations reached")
         self$timings$estimate$end <- Sys.time()
         private$send_pred(type = "final_iter")
-        private$compute_SE()
+        if (private$control$se) private$compute_se()
         private$run_callback()
       }
     },
     final_estimate  = function() {
-      self$control$iter <- self$control$iter + 1L
-      private$pred_incoming[,self$control$iter] <- private$msg_incoming$data
+      private$control$iter <- private$control$iter + 1L
+      private$pred_incoming[,private$control$iter] <- private$msg_incoming$data
       private$fit_model()
       private$compute_pred()
       self$timings$estimate$end <- Sys.time()
-      if (self$control$iter == self$control$max_iter) {
+      if (private$control$iter == private$control$max_iter) {
         message("Maximum iterations reached")
       } else {
         message("Partner converged")
-        self$control$iter <- self$control$iter + 1L
-        private$pred_incoming[,self$control$iter] <- private$msg_incoming$data
+        private$control$iter <- private$control$iter + 1L
+        private$pred_incoming[,private$control$iter] <- private$msg_incoming$data
         private$fit_model()
         private$compute_pred()
       }
-      private$compute_SE()
+      if (private$control$se) private$compute_se()
       private$run_callback()
     },
 
     # SE computation
-    compute_SE      = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing standard errors...\n"))
+    send_p          = function() {
+      if (self$debug) cat(self$name, "| Sending P.\n")
+      private$send_message("send_p", data = private$P)
+    },
+    return_p        = function() {
+      if (self$debug) cat(self$name, "| Receiving and returning P.\n")
+      private$Pp <- private$msg_incoming$data
+      private$send_message("return_p", data = private$P)
+    },
+    receive_p       = function() {
+      if (self$debug) cat(self$name, "| Receiving P.\n")
+      private$Pp <- private$msg_incoming$data
+      # start the estimation
+      private$send_pred(type = "estimate")
+    },
+    compute_se      = function() {
+      if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
-      iter         <- self$control$iter
-      pred         <- private$pred_outgoing[,iter] + private$pred_incoming[,iter]
-      prd_incoming <- private$pred_incoming[,1:iter]
-      res_outgoing <- apply(private$pred_outgoing[,1:iter], 2, function(prd) private$y - prd)
-      Hhat         <- prd_incoming %*% MASS::ginv(res_outgoing)
-      eig          <- eigen(Hhat)
-      private$Pp   <- sum(zapsmall(eig$values, 3) != 0)
-      Vp           <- eigen(Hhat)$vectors[,1:private$Pp]
-      Z            <- cbind(private$X, Vp)
-      if (self$family == "binomial") {
-        prob  <- 1 / (1 + exp(-pred))
-        wght  <- c(prob * (1 - prob))
+      R   <- private$control$iter
+      fam <- self$family
+
+      # Partitioned linear prediction matrices
+      # we only need min(R, N) iterations because the max rank is N.
+      idx       <- seq(1, R, length.out = min(R, private$N))
+      Eta_self  <- private$pred_outgoing[, idx]
+      Eta_other <- private$pred_incoming[, idx]
+      Eta       <- Eta_self + Eta_other
+
+      # Outcome matrix
+      Y <- matrix(private$y, private$N, min(R, private$N))
+
+      # Other necessary glm matrices
+      Mu    <- apply(Eta, 2, fam$linkinv) # mu matrix - mean of response
+      Delta <- apply(Eta, 2, fam$mu.eta)  # dmu/deta matrix
+
+      # Also perform this for the converged iteration (note lowercase letters)
+      eta   <- private$pred_outgoing[, R] + private$pred_incoming[, R]
+      mu    <- fam$linkinv(eta)
+      delta <- fam$mu.eta(eta)
+      vari  <- fam$variance(mu)
+      w     <- sqrt(delta^2 / vari)
+
+      # residual matrix on the working response level
+      Eps_self <- Eta_other + (Y - Mu) / Delta
+
+      # Weighted hat matrix
+      Hhat  <- (Eta_other) %*% MASS::ginv(Eps_self)
+
+      # Eigendecomposition with max Pp eigenvalues
+      eig        <- RSpectra::eigs(Hhat, k = private$Pp)
+      Hhat_range <- private$determine_range(eig$values)
+
+      # Rotated Xpartner matrix
+      RXp <- eig$vectors[, 1:Hhat_range]
+
+      # Augmented X matrix
+      aX <- cbind(private$X, RXp)
+
+      # unscaled VCOV
+      covmat_unscaled <- solve(crossprod(aX*w))[1:private$P, 1:private$P]
+
+      # dispersion correction
+      df_r <- private$N - private$P - private$Pp
+      if (self$family$family %in% c("poisson", "binomial")) {
+        dispersion <- 1
+      } else if (df_r > 0) {
+        dispersion <- c(crossprod(self$residuals())) / df_r
       } else {
-        sig2  <- c(crossprod(private$y - pred)) / (private$N - private$P - private$Pp)
-        wght  <- rep(1 / sig2, private$N)
+        dispersion <- NaN
       }
-      VCOV         <- MASS::ginv(crossprod(Z*wght, Z))[1:private$P, 1:private$P]
-      self$SE      <- Re(sqrt(diag(VCOV)))
+      covmat <- dispersion * covmat_unscaled
+
+      self$SE <- Re(sqrt(diag(covmat)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
+    },
+    determine_range = function(ev) {
+      # determine how many eigenvectors should go into Z based on eigenvalues
+      zap11 <- sum(zapsmall(Mod(ev), 11) > 0)
+
+      return(zap11)
     },
 
     # networking
@@ -433,7 +557,7 @@ PrivReg <- R6Class(
     setup_ws_server = function() {
       # httpuv websocket has different api than websocket :(
       # see https://github.com/rstudio/httpuv/blob/12744e32b0ef8480d8cffb12e9888cbae7f12778/R/httpuv.R#L291
-      if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
+      if (self$debug) cat(paste(self$name, "| setting up ws.\n"))
 
       private$ws$onMessage(function(binary, message) {
         if (!binary) {
@@ -453,7 +577,7 @@ PrivReg <- R6Class(
     },
     setup_ws_client = function() {
       # websocket has different api than httuv websocket :(
-      if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
+      if (self$debug) cat(paste(self$name, "| setting up ws.\n"))
 
       private$ws$onOpen(function(event) {
         cat(self$name, "| Connection opened.\n")
@@ -495,7 +619,7 @@ PrivReg <- R6Class(
         # now we need to chunk!
         cuts    <- c(seq(0, msg_len, 31457280), msg_len) # 30MB chunks
         cut_len <- length(cuts)
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Transmit data > 30MB, chunking ... \n"))
         for (i in 2:cut_len) {
           bits <- msg_enc[(cuts[i - 1] + 1):cuts[i]]
@@ -503,27 +627,28 @@ PrivReg <- R6Class(
           part_msg_raw <- list(type = type, no = i - 1, bits = bits)
           part_msg_enc <- private$data_encrypt(part_msg_raw, self$crypt_key)
           private$ws$send(part_msg_enc)
-          if (self$verbose)
+          if (self$debug)
             cat(paste(self$name, "|", i - 1, "/", cut_len - 1, "\n"))
         }
       }
 
     },
     receive_message = function() {
-      private$msg_incoming <- private$data_decrypt(private$msg_enc_in, self$crypt_key)
+      private$msg_incoming <-
+        private$data_decrypt(private$msg_enc_in, self$crypt_key)
 
       # chunking stuff
       if (private$msg_incoming$type == "chunk") {
         # message is chunked!
         no <- private$msg_incoming$no
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Receiving chunked message,", no, "\n"))
         private$msg_chunks_in[[no]] <- private$msg_incoming$bits
         return()
       }
       if (private$msg_incoming$type == "chunk_last") {
         no <- private$msg_incoming$no
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Receiving chunked message,", no, "(end)\n"))
         private$msg_enc_in <- c(unlist(private$msg_chunks_in),
                                 private$msg_incoming$bits)
@@ -532,12 +657,14 @@ PrivReg <- R6Class(
         return()
       }
 
-      if (self$verbose)
+      if (self$debug)
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 
       switch(private$msg_incoming$type,
-        "estimate"         = private$run_estimate(),
-        "final_iter"       = private$final_estimate()
+        "estimate"   = private$run_estimate(),
+        "final_iter" = private$final_estimate(),
+        "send_p"     = private$return_p(),
+        "return_p"   = private$receive_p()
       )
     }
   )

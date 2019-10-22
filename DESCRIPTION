@@ -16,10 +16,9 @@ Imports:
     R6,
     openssl,
     Matrix,
-    MASS,
     stats,
-    changepoint,
-    RSpectra
+    RSpectra,
+    MASS
 Remotes: vankesteren/firatheme
 RoxygenNote: 6.1.1
 Suggests:

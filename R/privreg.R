@@ -14,6 +14,7 @@
 #'   family    = "gaussian",
 #'   name      = "alice",
 #'   verbose   = FALSE,
+#'   debug     = FALSE,
 #'   crypt_key = "testkey"
 #' )
 #'
@@ -37,7 +38,8 @@
 #'  - `family` response family as in glm. Currently only gaussian and binomial are supported
 #'  - `intercept` whether to include the intercept. Always use this instead of `+ 0` in the model formula
 #'  - `name` name of this institution
-#'  - `verbose` whether to print debug information
+#'  - `verbose` whether to print information
+#'  - `debug` whether to print debug statements
 #'  - `crypt_key` pre-shared key used to encrypt communication
 #'
 #'
@@ -105,6 +107,7 @@ PrivReg <- R6Class(
     family       = "gaussian",
     formula      = NULL,
     verbose      = NULL,
+    debug        = NULL,
     name         = NULL,
     crypt_key    = NULL,
     timings      = list(
@@ -114,16 +117,26 @@ PrivReg <- R6Class(
     callback     = NULL,
     initialize   = function(formula, data, family = "gaussian",
                             intercept = TRUE, name = "alice", verbose = FALSE,
-                            crypt_key = "testkey") {
+                            debug = FALSE, crypt_key = "testkey") {
       # init callback
       self$callback <- function() invisible(NULL)
 
       # public slots
       self$name      <- name
       self$verbose   <- verbose
+      self$debug     <- debug
       self$crypt_key <- crypt_key
-      self$family    <- family
       self$formula   <- formula
+
+      # family
+      if (is.character(family))
+        family <- get(family, mode = "function", envir = parent.frame())
+      if (is.function(family))
+        self$family <- family()
+      if (is.null(self$family$family)) {
+        print(self$family)
+        stop("'family' not recognized")
+      }
 
       # data information
       private$X     <- model.matrix(formula, data)
@@ -137,7 +150,7 @@ PrivReg <- R6Class(
       self$beta <- stats::glm.fit(
         x      = private$X,
         y      = private$y,
-        family = get(family)()
+        family = self$family
       )$coefficients
 
       # prepare for iterations
@@ -145,7 +158,7 @@ PrivReg <- R6Class(
       private$pred_incoming <- matrix(0, private$N, private$control$max_iter)
       private$pred_outgoing <- matrix(0, private$N, private$control$max_iter)
     },
-    set_control  = function(iter = 0L, max_iter = 1e3L, tol = 1e-8, se = TRUE) {
+    set_control  = function(iter = 0L, max_iter = 1e4L, tol = 1e-8, se = TRUE) {
       old_max_iter <- private$control$max_iter
       private$control <- list(
         iter     = iter,
@@ -172,7 +185,7 @@ PrivReg <- R6Class(
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose)
+      if (self$debug)
         cat(paste(self$name, "| starting server on port:", port, "\n"))
       private$srv <- httpuv::startServer(
         host = "0.0.0.0",
@@ -194,7 +207,7 @@ PrivReg <- R6Class(
         if (!is.function(callback)) stop("Callback should be a function!")
         self$callback <- callback
       }
-      if (self$verbose) cat(paste(self$name, "| opening websocket connection\n"))
+      if (self$debug) cat(paste(self$name, "| opening websocket connection\n"))
 
       full_url <- paste0("ws://", url, ":", port)
 
@@ -213,7 +226,7 @@ PrivReg <- R6Class(
         self$callback <- callback
       }
       if (!self$connected()) stop("Connect to another institution first.")
-      if (self$verbose) cat(paste(self$name, "| Performing initial run\n"))
+      if (self$debug) cat(paste(self$name, "| Performing initial run\n"))
       self$timings$estimate$start <- Sys.time()
       private$control$iter <- private$control$iter + 1L
       private$fit_model()
@@ -231,7 +244,7 @@ PrivReg <- R6Class(
       private$run_callback()
     },
     disconnect   = function() {
-      if (self$verbose) cat(paste(self$name, "| Disconnecting.\n"))
+      if (self$debug) cat(paste(self$name, "| Disconnecting.\n"))
       if (inherits(private$ws, "WebSocket")) private$ws$close()
       if (!is.null(private$srv)) {
         httpuv::stopServer(private$srv)
@@ -250,10 +263,22 @@ PrivReg <- R6Class(
       }
     },
     converged    = function() {
-      if (private$control$iter < 2) return(FALSE)
-      diffs <- abs(private$betas[, private$control$iter] -
-                   private$betas[, private$control$iter - 1])
-      if (all(diffs < private$control$tol)) TRUE else FALSE
+      i <- private$control$iter
+      if (i < 2) return(FALSE)
+      diffs <- abs(private$betas[, i] - private$betas[, i - 1])
+      sum(diffs) < private$control$tol
+    },
+    deviance     = function() {
+      i   <- private$control$iter
+      eta <- private$pred_incoming[, i] + private$pred_outgoing[, i]
+      mu  <- self$family$linkinv(eta)
+      return(sum(self$family$dev.resids(private$y, mu, rep(1, private$N))))
+    },
+    residuals    = function() {
+      i    <- private$control$iter
+      eta  <- private$pred_incoming[, i] + private$pred_outgoing[, i]
+      mu   <- self$family$linkinv(eta)
+      return((private$y - mu)/self$family$mu.eta(eta))
     },
     plot_paths   = function() {
       if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Install ggplot2")
@@ -280,7 +305,7 @@ PrivReg <- R6Class(
         cat(sep = "", "\n",
             "Privacy-preserving GLM\n",
             "----------------------\n\n",
-            "family:      ", self$family, "\n",
+            "family:      ", self$family$family, "\n",
             "formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
             "iterations:  ", private$control$iter, "\n\n",
             "Coefficients:\n")
@@ -306,7 +331,7 @@ PrivReg <- R6Class(
       cat(sep = "", "\n",
         "Privacy-preserving GLM\n",
         "----------------------\n\n",
-        "family:      ", self$family, "\n",
+        "family:      ", self$family$family, "\n",
         "formula:     ", frml[2], " ", frml[1]," ", frml[3], "\n",
         "iterations:  ", private$control$iter, "\n\n",
         "Coefficients:\n"
@@ -345,7 +370,7 @@ PrivReg <- R6Class(
     # control parameters
     control      = list(
       iter     = 0L,
-      max_iter = 1e3L,
+      max_iter = 1e4L,
       tol      = 1e-8,
       se       = TRUE
     ),
@@ -371,23 +396,27 @@ PrivReg <- R6Class(
 
     # estimation
     fit_model       = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing beta.\n"))
+      if (self$debug) cat(paste(self$name, "| Computing beta.\n"))
       pred_in  <- private$pred_incoming[, private$control$iter]
       pred_out <- private$pred_outgoing[, max(1, private$control$iter - 1)]
 
-      self$beta  <- switch(self$family,
-        gaussian = fit_gaussian(private$y, private$X, pred_in),
-        binomial = fit_binomial(private$y, private$X, pred_in)
-      )
+      glm_fit  <- glm.fit(private$X, private$y, intercept = FALSE,
+                          family = self$family, offset = pred_in)
+      self$beta <- as.vector(glm_fit[["coefficients"]])
+
+      # self$beta  <- switch(self$family,
+      #   gaussian = fit_gaussian(private$y, private$X, pred_in),
+      #   binomial = fit_binomial(private$y, private$X, pred_in)
+      # )
 
       private$betas[, private$control$iter] <- self$beta
     },
     compute_pred    = function() {
-      if (self$verbose) cat(paste(self$name, "| Computing prediction.\n"))
+      if (self$debug) cat(paste(self$name, "| Computing prediction.\n"))
       private$pred_outgoing[,private$control$iter] <- private$X %*% self$beta
     },
     send_pred       = function(type) {
-      if (self$verbose) cat(paste(self$name, "| Sending prediction.\n"))
+      if (self$debug) cat(paste(self$name, "| Sending prediction.\n"))
       private$send_message(type = type, data = private$pred_outgoing[, private$control$iter])
     },
     run_estimate    = function() {
@@ -397,7 +426,12 @@ PrivReg <- R6Class(
       private$pred_incoming[,private$control$iter] <- private$msg_incoming$data
       private$fit_model()
       private$compute_pred()
-      if (self$verbose) cat(self$name, "| iteration:", private$control$iter, "\n")
+      if (self$verbose) {
+        cat(self$name,
+            "| iteration:", private$control$iter,
+            "| deviance:", format(self$deviance(), nsmall = 8), "\n")
+      }
+
       if (self$converged()) {
         message("PrivReg converged")
         self$timings$estimate$end <- Sys.time()
@@ -435,16 +469,16 @@ PrivReg <- R6Class(
 
     # SE computation
     send_p          = function() {
-      if (self$verbose) cat(self$name, "| Sending P.\n")
+      if (self$debug) cat(self$name, "| Sending P.\n")
       private$send_message("send_p", data = private$P)
     },
     return_p        = function() {
-      if (self$verbose) cat(self$name, "| Receiving and returning P.\n")
+      if (self$debug) cat(self$name, "| Receiving and returning P.\n")
       private$Pp <- private$msg_incoming$data
       private$send_message("return_p", data = private$P)
     },
     receive_p       = function() {
-      if (self$verbose) cat(self$name, "| Receiving P.\n")
+      if (self$debug) cat(self$name, "| Receiving P.\n")
       private$Pp <- private$msg_incoming$data
       # start the estimation
       private$send_pred(type = "estimate")
@@ -452,14 +486,14 @@ PrivReg <- R6Class(
     compute_se      = function() {
       if (self$verbose) cat(paste(self$name, "| Computing standard errors.\n"))
       self$timings$se$start <- Sys.time()
-      R <- private$control$iter
-
-      fam <- if (self$family == "binomial") binomial() else gaussian()
+      R   <- private$control$iter
+      fam <- self$family
 
       # Partitioned linear prediction matrices
       # we only need min(R, N) iterations because the max rank is N.
-      Eta_self  <- private$pred_outgoing[,1:(min(R, private$N))]
-      Eta_other <- private$pred_incoming[,1:(min(R, private$N))]
+      idx       <- seq(1, R, length.out = min(R, private$N))
+      Eta_self  <- private$pred_outgoing[, idx]
+      Eta_other <- private$pred_incoming[, idx]
       Eta       <- Eta_self + Eta_other
 
       # Outcome matrix
@@ -468,65 +502,51 @@ PrivReg <- R6Class(
       # Other necessary glm matrices
       Mu    <- apply(Eta, 2, fam$linkinv) # mu matrix - mean of response
       Delta <- apply(Eta, 2, fam$mu.eta)  # dmu/deta matrix
-      Vari  <- apply(Mu, 2, fam$variance) # variance function matrix
-      W     <- sqrt(Delta * Delta / Vari) # weights matrix
 
       # Also perform this for the converged iteration (note lowercase letters)
-      eta   <- private$pred_outgoing[,R] + private$pred_incoming[,R]
+      eta   <- private$pred_outgoing[, R] + private$pred_incoming[, R]
       mu    <- fam$linkinv(eta)
       delta <- fam$mu.eta(eta)
       vari  <- fam$variance(mu)
       w     <- sqrt(delta^2 / vari)
-      W     <- matrix(w, nrow = private$N, ncol = min(R, private$N))
 
       # residual matrix on the working response level
       Eps_self <- Eta_other + (Y - Mu) / Delta
 
       # Weighted hat matrix
-      Hhat  <- (Eta_other) %*% MASS::ginv(W * Eps_self) #(why not W * Eta_other??)
+      Hhat  <- (Eta_other) %*% MASS::ginv(Eps_self)
 
       # Eigendecomposition with max Pp eigenvalues
       eig        <- RSpectra::eigs(Hhat, k = private$Pp)
       Hhat_range <- private$determine_range(eig$values)
 
-      # Weighted rotated Xpartner matrix
+      # Rotated Xpartner matrix
       RXp <- eig$vectors[, 1:Hhat_range]
-
-      # Unweighted rotated Xpartner
-      # RXp  <- apply(WRXp, 2, function(rxp) rxp * w)
-
-      if (self$family == "binomial") {
-        wght  <- w
-      } else {
-        P    <- private$P + private$Pp
-        invs <- sqrt((private$N - P) / c(crossprod(private$y - eta)))
-        wght <- rep(invs, private$N)
-      }
 
       # Augmented X matrix
       aX <- cbind(private$X, RXp)
 
-      # VCOV
-      VCOV    <- MASS::ginv(crossprod(aX*wght))[1:private$P, 1:private$P]
-      self$SE <- Re(sqrt(diag(VCOV)))
+      # unscaled VCOV
+      covmat_unscaled <- solve(crossprod(aX*w))[1:private$P, 1:private$P]
+
+      # dispersion correction
+      df_r <- private$N - private$P - private$Pp
+      if (self$family$family %in% c("poisson", "binomial")) {
+        dispersion <- 1
+      } else if (df_r > 0) {
+        dispersion <- c(crossprod(self$residuals())) / df_r
+      } else {
+        dispersion <- NaN
+      }
+      covmat <- dispersion * covmat_unscaled
+
+      self$SE <- Re(sqrt(diag(covmat)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
     },
     determine_range = function(ev) {
       # determine how many eigenvectors should go into Z based on eigenvalues
-
-      # changepoint may underestimate
-      # changepoint <- changepoint::cpt.meanvar(log(Mod(ev)))@cpts[1]
-
-      # zapsmall 11 may overestimate
       zap11 <- sum(zapsmall(Mod(ev), 11) > 0)
-
-      # wm <- weighted.mean(
-      #   c(changepoint, zap11),
-      #   c(        0.4,   0.6) # how much faith to put in each metric
-      # )
-
-      # return(round(wm))
 
       return(zap11)
     },
@@ -537,7 +557,7 @@ PrivReg <- R6Class(
     setup_ws_server = function() {
       # httpuv websocket has different api than websocket :(
       # see https://github.com/rstudio/httpuv/blob/12744e32b0ef8480d8cffb12e9888cbae7f12778/R/httpuv.R#L291
-      if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
+      if (self$debug) cat(paste(self$name, "| setting up ws.\n"))
 
       private$ws$onMessage(function(binary, message) {
         if (!binary) {
@@ -557,7 +577,7 @@ PrivReg <- R6Class(
     },
     setup_ws_client = function() {
       # websocket has different api than httuv websocket :(
-      if (self$verbose) cat(paste(self$name, "| setting up ws.\n"))
+      if (self$debug) cat(paste(self$name, "| setting up ws.\n"))
 
       private$ws$onOpen(function(event) {
         cat(self$name, "| Connection opened.\n")
@@ -599,7 +619,7 @@ PrivReg <- R6Class(
         # now we need to chunk!
         cuts    <- c(seq(0, msg_len, 31457280), msg_len) # 30MB chunks
         cut_len <- length(cuts)
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Transmit data > 30MB, chunking ... \n"))
         for (i in 2:cut_len) {
           bits <- msg_enc[(cuts[i - 1] + 1):cuts[i]]
@@ -607,7 +627,7 @@ PrivReg <- R6Class(
           part_msg_raw <- list(type = type, no = i - 1, bits = bits)
           part_msg_enc <- private$data_encrypt(part_msg_raw, self$crypt_key)
           private$ws$send(part_msg_enc)
-          if (self$verbose)
+          if (self$debug)
             cat(paste(self$name, "|", i - 1, "/", cut_len - 1, "\n"))
         }
       }
@@ -621,14 +641,14 @@ PrivReg <- R6Class(
       if (private$msg_incoming$type == "chunk") {
         # message is chunked!
         no <- private$msg_incoming$no
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Receiving chunked message,", no, "\n"))
         private$msg_chunks_in[[no]] <- private$msg_incoming$bits
         return()
       }
       if (private$msg_incoming$type == "chunk_last") {
         no <- private$msg_incoming$no
-        if (self$verbose)
+        if (self$debug)
           cat(paste(self$name, "| Receiving chunked message,", no, "(end)\n"))
         private$msg_enc_in <- c(unlist(private$msg_chunks_in),
                                 private$msg_incoming$bits)
@@ -637,7 +657,7 @@ PrivReg <- R6Class(
         return()
       }
 
-      if (self$verbose)
+      if (self$debug)
         cat(paste(self$name, "|", private$msg_incoming$type, "\n"))
 
       switch(private$msg_incoming$type,

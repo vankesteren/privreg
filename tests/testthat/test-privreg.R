@@ -85,8 +85,8 @@ bob <- PrivReg$new(
 alice$listen()
 bob$connect("127.0.0.1")
 
-alice$set_control(max_iter = 1e4, se = FALSE)
-bob$set_control(max_iter = 1e4, se = FALSE)
+alice$set_control(max_iter = 3e4, se = FALSE)
+bob$set_control(max_iter = 3e4, se = FALSE)
 
 # do the thing
 alice$estimate()
@@ -99,3 +99,54 @@ bob$summary()
 # disconnect
 alice$disconnect()
 
+
+
+# ensure no servers running
+httpuv::stopAllServers()
+
+# poisson outcome
+fam <- poisson()
+set.seed(45)
+S <- cov2cor(rWishart(1, 8, diag(8))[,,1])
+X <- MASS::mvrnorm(1000, rep(0, 8), S)
+b <- runif(8, -1, 1)
+y_pois <- vapply(fam$linkinv(X %*% b), function(mu) rpois(1, mu), 1)
+
+
+alice_data <- data.frame(y = y_pois, X[, 1:4])
+bob_data   <- data.frame(y = y_pois, X[, 5:8])
+
+
+alice <- PrivReg$new(
+  formula = y ~ . + 0,
+  data = alice_data,
+  family = "poisson",
+  name = "alice",
+  verbose = TRUE,
+  crypt_key = "maastricht"
+)
+
+bob <- PrivReg$new(
+  formula = y ~ . + 0,
+  data = bob_data,
+  family = "poisson",
+  name = "bob  ",
+  verbose = TRUE,
+  crypt_key = "maastricht"
+)
+
+
+alice$listen()
+bob$connect("127.0.0.1")
+
+
+# do the thing
+alice$estimate()
+
+# compare results to glm()
+summary(glm(y_pois ~ X + 0, family = "poisson"))
+alice$summary()
+bob$summary()
+
+# disconnect
+alice$disconnect()

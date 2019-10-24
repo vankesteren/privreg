@@ -518,13 +518,9 @@ PrivReg <- R6Class(
 
       # Eigendecomposition with max Pp eigenvalues
       eig        <- RSpectra::eigs(Hhat, k = private$Pp)
-      Hhat_range <- private$determine_range(eig$values)
-
-      # Rotated Xpartner matrix
-      RXp <- eig$vectors[, 1:Hhat_range]
 
       # Augmented X matrix
-      aX <- cbind(private$X, RXp)
+      aX <- cbind(private$X, eig$vectors)
 
       # unscaled VCOV
       covmat_unscaled <- solve(crossprod(aX*w))[1:private$P, 1:private$P]
@@ -543,13 +539,7 @@ PrivReg <- R6Class(
       self$SE <- Re(sqrt(diag(covmat)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
-    },
-    determine_range = function(ev) {
-      # determine how many eigenvectors should go into Z based on eigenvalues
-      zap11 <- sum(zapsmall(Mod(ev), 11) > 0)
-
-      return(zap11)
-    },
+    }
 
     # networking
     ws              = NULL, # the websocket object

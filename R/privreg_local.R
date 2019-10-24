@@ -83,8 +83,8 @@ privreg_local <- function(y, Xa, Xb, family = gaussian(),
   eig_a  <- RSpectra::eigs(Hhat_a, k = Pb)
   eig_b  <- RSpectra::eigs(Hhat_b, k = Pa)
 
-  Z_a    <- cbind(Xa, eig_a$vectors[, 1:sum(zapsmall(eig_a$values, 11) != 0)])
-  Z_b    <- cbind(Xb, eig_b$vectors[, 1:sum(zapsmall(eig_b$values, 11) != 0)])
+  Z_a    <- cbind(Xa, eig_a$vectors)
+  Z_b    <- cbind(Xb, eig_b$vectors)
 
   covmat_unscaled_a <- solve(crossprod(Z_a*w))[1:Pa, 1:Pa]
   covmat_unscaled_b <- solve(crossprod(Z_b*w))[1:Pb, 1:Pb]

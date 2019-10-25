@@ -539,7 +539,7 @@ PrivReg <- R6Class(
       self$SE <- Re(sqrt(diag(covmat)))
       if (self$verbose) cat(paste(self$name, "| Done!\n"))
       self$timings$se$end <- Sys.time()
-    }
+    },
 
     # networking
     ws              = NULL, # the websocket object

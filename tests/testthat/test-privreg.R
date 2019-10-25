@@ -1,20 +1,18 @@
 context("Test PrivReg manually")
-skip("Automated testing does not work yet.")
+skip("Automated testing for privreg remote does not work yet.")
 
 # automated testing is not really working :(
 
-# ensure no servers running
-httpuv::stopAllServers()
-
 # create test data
 set.seed(45)
-S <- rWishart(1, 10, diag(10))[,,1] / 10
-X <- cbind(MASS::mvrnorm(1000, rep(0, 10), S), rbinom(100, 1, 0.1))
-b <- runif(11, -1, 1)
-y <- X %*% b + rnorm(100, sd = sd(X %*% b))
+S <- cov2cor(rWishart(1, 4, diag(4))[,,1])
+X <- MASS::mvrnorm(1000, rep(0, 4), S)
+b <- runif(4, -1, 1)
+e <- rnorm(100, sd = sd(X %*% b))
+y <- X %*% b + e
 
-alice_data <- data.frame(y, X[, 1:5])
-bob_data   <- data.frame(y, X[, 6:11])
+alice_data <- data.frame(y, X[, 1:2])
+bob_data   <- data.frame(y, X[, 3:4])
 
 alice <- PrivReg$new(
   formula = y ~ .,
@@ -34,19 +32,35 @@ bob <- PrivReg$new(
   crypt_key = "maastricht"
 )
 
-alice$listen()
-bob$connect("127.0.0.1")
+alice$listen(port = 9000)
+bob$connect("127.0.0.1", port = 9000, callback = function() {
+  alice$estimate(callback = function() {
+    alice$disconnect()
+    fit <- glm(y ~ X + 0)
 
-# do the thing
-alice$estimate()
+    test_that("Gaussian coefficients within tolerance", {
+      expect(
+        all(abs(c(alice$beta, bob$beta) - unname(coef(fit))) < 1e-6),
+        failure_message = paste(
+          "Coefficients are not within tolerance.",
+          "\nMean deviation:", mean(abs(res$full$se - res$priv$se))
+        )
+      )
+    })
+
+    test_that("Gaussian standard errors are the same", {
+      expect_equal(unname(c(alice$SE, bob$SE)), unname(sqrt(diag(vcov(fit)))))
+    })
+  })
+})
+
 
 # compare results to lm()
-summary(lm(y ~ X + 0))
+summary()
 alice$summary()
 bob$summary()
 
 # disconnect
-alice$disconnect()
 
 
 

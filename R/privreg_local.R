@@ -14,8 +14,8 @@
 #'
 #' @export
 
-privreg_local <- function(y, Xa, Xb, family = gaussian(),
-                          tol = 1e-8, maxit = 1e4, debug = TRUE) {
+privreg_local <- function(y, Xa, Xb, family = gaussian(), se = TRUE,
+                          tol = 1e-12, maxit = 1e4, debug = TRUE) {
   conv <- FALSE
   i <- 0L
   N <- length(y)
@@ -59,49 +59,54 @@ privreg_local <- function(y, Xa, Xb, family = gaussian(),
   if (!conv) warning("Not converged!")
 
   # compute SE
-  if (debug) cat("Local | Done. Computing SE. \n")
-  idx   <- seq(1, i, length.out = min(i, N))
-  Eta_a <- eta_a[, idx]
-  Eta_b <- eta_b[, idx]
-  Eta   <- Eta_a + Eta_b
-  Y     <- matrix(y, N, min(i, N))
-  Mu    <- apply(Eta, 2, family$linkinv)
-  Delta <- apply(Eta, 2, family$mu.eta)
+  if (se) {
+    if (debug) cat("Local | Done. Computing SE. \n")
+    idx   <- seq(1, i, length.out = min(i, N))
+    Eta_a <- eta_a[, idx]
+    Eta_b <- eta_b[, idx]
+    Eta   <- Eta_a + Eta_b
+    Y     <- matrix(y, N, min(i, N))
+    Mu    <- apply(Eta, 2, family$linkinv)
+    Delta <- apply(Eta, 2, family$mu.eta)
 
-  eta   <- eta_a[, i] + eta_b[, i]
-  mu    <- family$linkinv(eta)
-  delta <- family$mu.eta(eta)
-  vari  <- family$variance(mu)
-  w     <- sqrt(delta^2 / vari)
+    eta   <- eta_a[, i] + eta_b[, i]
+    mu    <- family$linkinv(eta)
+    delta <- family$mu.eta(eta)
+    vari  <- family$variance(mu)
+    w     <- sqrt(delta^2 / vari)
 
-  Eps_a <- Eta_b + (Y - Mu) / Delta
-  Eps_b <- Eta_a + (Y - Mu) / Delta
+    Eps_a <- Eta_b + (Y - Mu) / Delta
+    Eps_b <- Eta_a + (Y - Mu) / Delta
 
-  Hhat_a <- (Eta_b) %*% MASS::ginv(Eps_a)
-  Hhat_b <- (Eta_a) %*% MASS::ginv(Eps_b)
+    Hhat_a <- (Eta_b) %*% MASS::ginv(Eps_a)
+    Hhat_b <- (Eta_a) %*% MASS::ginv(Eps_b)
 
-  eig_a  <- RSpectra::eigs(Hhat_a, k = Pb)
-  eig_b  <- RSpectra::eigs(Hhat_b, k = Pa)
+    eig_a  <- RSpectra::eigs(Hhat_a, k = Pb)
+    eig_b  <- RSpectra::eigs(Hhat_b, k = Pa)
 
-  Z_a    <- cbind(Xa, eig_a$vectors)
-  Z_b    <- cbind(Xb, eig_b$vectors)
+    Z_a    <- cbind(Xa, eig_a$vectors)
+    Z_b    <- cbind(Xb, eig_b$vectors)
 
-  covmat_unscaled_a <- solve(crossprod(Z_a*w))[1:Pa, 1:Pa]
-  covmat_unscaled_b <- solve(crossprod(Z_b*w))[1:Pb, 1:Pb]
+    covmat_unscaled_a <- solve(crossprod(Z_a*w))[1:Pa, 1:Pa]
+    covmat_unscaled_b <- solve(crossprod(Z_b*w))[1:Pb, 1:Pb]
 
-  df_r <- N - Pa - Pb
-  if (family$family %in% c("poisson", "binomial")) {
-    dispersion <- 1
-  } else if (df_r > 0) {
-    dispersion <- c(crossprod((y - mu) / delta)) / df_r
+    df_r <- N - Pa - Pb
+    if (family$family %in% c("poisson", "binomial")) {
+      dispersion <- 1
+    } else if (df_r > 0) {
+      dispersion <- c(crossprod((y - mu) / delta)) / df_r
+    } else {
+      dispersion <- NaN
+    }
+    covmat_a <- dispersion * covmat_unscaled_a
+    covmat_b <- dispersion * covmat_unscaled_b
+
+    se_a <- Re(sqrt(diag(covmat_a)))
+    se_b <- Re(sqrt(diag(covmat_b)))
   } else {
-    dispersion <- NaN
+    se_a <- NULL
+    se_b <- NULL
   }
-  covmat_a <- dispersion * covmat_unscaled_a
-  covmat_b <- dispersion * covmat_unscaled_b
-
-  se_a <- Re(sqrt(diag(covmat_a)))
-  se_b <- Re(sqrt(diag(covmat_b)))
 
   fit <- glm(y ~ Xa + Xb + 0, family = family)
   return(list(

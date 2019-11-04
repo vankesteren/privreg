@@ -1,7 +1,7 @@
 Package: privreg
 Type: Package
 Title: Privacy-preserving Regression
-Version: 0.9.4
+Version: 0.9.5
 Author: Erik-Jan van Kesteren
 Maintainer: Erik-Jan van Kesteren <e.vankesteren1@uu.nl>
 Description: Generalized linear modeling on vertically partitioned data using 

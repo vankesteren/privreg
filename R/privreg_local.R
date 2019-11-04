@@ -6,6 +6,7 @@
 #' @param Xa alice model matrix
 #' @param Xb bob model matrix
 #' @param family response family (use family object!)
+#' @param se whether to compute the standard error
 #' @param tol tolerance
 #' @param maxit maximum iterations
 #' @param debug print debug information
@@ -38,7 +39,6 @@ privreg_local <- function(y, Xa, Xb, family = gaussian(), se = TRUE,
   eta_b[,  i] <- Xb %*% bhat_b[, i]
 
   while (!conv && i < maxit) {
-
     i <- i + 1L
     eta <- eta_a[, i - 1] + eta_b[, i - 1]
     dev <- sum(family$dev.resids(y, family$linkinv(eta), rep(1, N)))
@@ -53,8 +53,9 @@ privreg_local <- function(y, Xa, Xb, family = gaussian(), se = TRUE,
                                      intercept = FALSE)$coefficients)
     eta_b[,  i] <- Xb %*% bhat_b[, i]
 
-    diffs <- abs(bhat_a[, i] - bhat_a[, i - 1])
-    if (sum(diffs) < tol) conv <- TRUE
+    diffs_a <- abs(bhat_a[, i] - bhat_a[, i - 1])
+    diffs_b <- abs(bhat_b[, i] - bhat_b[, i - 1])
+    if (sum(diffs_a) < tol || sum(diffs_b) < tol) conv <- TRUE
   }
   if (!conv) warning("Not converged!")
 

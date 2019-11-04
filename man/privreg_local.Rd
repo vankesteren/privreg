@@ -4,7 +4,7 @@
 \alias{privreg_local}
 \title{Local vertically partitioned data regression}
 \usage{
-privreg_local(y, Xa, Xb, family = gaussian(), tol = 1e-08,
+privreg_local(y, Xa, Xb, family = gaussian(), se = TRUE, tol = 1e-12,
   maxit = 10000, debug = TRUE)
 }
 \arguments{
@@ -15,6 +15,8 @@ privreg_local(y, Xa, Xb, family = gaussian(), tol = 1e-08,
 \item{Xb}{bob model matrix}
 
 \item{family}{response family (use family object!)}
+
+\item{se}{whether to compute the standard error}
 
 \item{tol}{tolerance}
 

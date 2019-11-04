@@ -130,11 +130,12 @@ PrivReg <- R6Class(
 
       # family
       if (is.character(family))
-        family <- get(family, mode = "function", envir = parent.frame())
+        self$family <- get(family, mode = "function", envir = parent.frame())
       if (is.function(family))
         self$family <- family()
+      if (inherits(family, "family"))
+        self$family <- family
       if (is.null(self$family$family)) {
-        print(self$family)
         stop("'family' not recognized")
       }
 
